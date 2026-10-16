@@ -80,7 +80,29 @@ Confirm that localization is active:
 ros2 run tf2_ros tf2_echo map base_link
 ```
 
-### Terminal 5: Teleoperation
+### Terminal 5: Cartographer-derived motion estimate
+
+```bash
+cd ~/newf1_ws
+source install/setup.bash
+ros2 launch vehicle_state_estimator cartographer_velocity.launch.py
+```
+
+The launch file uses the real-car validated settings: a `1.0 s` history window and a
+`0.005 m/s` deadband. Confirm all five outputs:
+
+```bash
+ros2 topic echo /cartographer_velocity/speed
+ros2 topic echo /cartographer_velocity/vx
+ros2 topic echo /cartographer_velocity/vy
+ros2 topic echo /cartographer_velocity/movement_direction
+ros2 topic echo /cartographer_velocity/heading
+```
+
+If the estimator stops publishing, first check `map -> base_link`, `/scan`, and
+`/sensors/imu/raw`. The estimator intentionally waits when Cartographer has no current TF.
+
+### Terminal 6: Teleoperation
 
 ```bash
 cd ~/newf1_ws
@@ -155,6 +177,7 @@ ros2 run car_control pure_pursuit_tf
 | `base_link` or `imu` frame is missing | `tf2_echo base_link imu` | Rebuild and launch `my_robot_bringup` |
 | Cartographer has no IMU subscription | `ros2 node info /cartographer_node` | Confirm the IMU remap and `use_imu_data = true` |
 | No `/map` output | Cartographer logs and sensor rates | Restore `/scan`, IMU, and required TF inputs |
+| No Cartographer velocity topics | `tf2_echo map base_link` and sensor publishers | Restore Cartographer TF, then restart the estimator |
 | Vehicle does not respond | VESC driver, bridge, and topic remap | Confirm both control nodes are active |
 
 ## Weekly follow-up: USB, low-speed odometry, and TF
@@ -208,6 +231,6 @@ ros2 run tf2_ros tf2_echo map odom
 ros2 run tf2_ros tf2_echo odom base_link
 ```
 
-The planned velocity node will differentiate timestamped poses in the continuous `odom`
-frame. Global `map` corrections must be monitored separately; a TF publication timer is
-not evidence of independent sensor measurements at that frequency.
+The implemented velocity node differentiates timestamped `map -> base_link` poses over a
+1.0 s window. Global map corrections can affect the estimate; the synchronized VESC comparison
+and filter-latency measurements described in the October 15 weekly record remain future work.
