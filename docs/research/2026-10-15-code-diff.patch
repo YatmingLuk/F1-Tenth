@@ -1,0 +1,461 @@
+diff --git a/README.md b/README.md
+index e40e96a..1cbf7b4 100644
+--- a/README.md
++++ b/README.md
+@@ -25,9 +25,9 @@ The implementation details and validation results are documented in
+ 
+ The diagram shows the intended end-to-end architecture, from LiDAR-based mapping and
+ waypoint generation to pure pursuit, overtaking decisions, VESC control, and the physical car.
+-The current sensor, localization, low-speed odometry, and USB-identification changes were
+-validated on the physical vehicle under Linux. Higher-level autonomous behavior and the
+-Cartographer-derived velocity estimator remain the next stage of work.
++The current sensor, localization, low-speed odometry, USB-identification, and
++Cartographer-derived motion-estimation changes were validated on the physical vehicle under
++Linux. Higher-level autonomous behavior and synchronized VESC comparison remain the next stage.
+ 
+ ### Localization data flow
+ 
+@@ -39,6 +39,8 @@ flowchart LR
+     HOKUYO[One urg_node_driver] -->|/scan| CARTO
+     TF[Static TF: base_link to imu/laser] --> CARTO
+     ODOM -->|/vesc/odom, publish_tf=false| COMPARE[Velocity comparison]
++    CARTO -->|map to base_link pose| STATE[vehicle_state_estimator]
++    STATE -->|speed, vx, vy, direction, heading| MOTION[Motion topics]
+     CARTO -->|/map| RVIZ[RViz 2]
+     CARTO -->|map to odom to base_link TF| RVIZ
+ ```
+@@ -51,6 +53,7 @@ flowchart LR
+ | `urg_node_driver` | Runs once through `robot.launch.py` and publishes `/scan` at approximately 10 Hz |
+ | Static TF publishers | Publish `base_link -> imu` and `base_link -> laser` |
+ | Cartographer | Consumes `/scan` and `/sensors/imu/raw` and owns the dynamic `map -> odom -> base_link` transform |
++| `cartographer_velocity` | Differentiates `map -> base_link` over a 1.0 s window and publishes speed, map-frame velocity components, movement direction, and heading |
+ | `vesc_to_odom_node` | Optional comparison source; uses configurable `speed_deadband` and must run with `publish_tf:=false` beside Cartographer |
+ 
+ ## Repository layout
+@@ -60,12 +63,16 @@ flowchart LR
+ | `src/vesc` | VESC driver, messages, and Ackermann bridge |
+ | `src/my_robot_bringup` | Hokuyo launch and static sensor transforms |
+ | `src/my_cartographer_config` | Cartographer launch and 2D SLAM configuration |
++| `src/vehicle_state_estimator` | Cartographer pose-derived speed, velocity components, movement direction, and heading |
+ | `src/car_control` | Drive bridge, waypoint logging, and pure pursuit |
+ | `src/map_to_centerline` | Centerline extraction from a saved map |
+ | `docs/OPERATIONS.md` | Build, launch, validation, mapping, and driving commands |
+ | `docs/IMU_LIDAR_CARTOGRAPHER.md` | Sensor-fusion changes, rationale, results, and limits |
+ | `docs/research/2026-10-10-weekly-improvements.md` | Weekly architecture, change locations, code excerpts, and velocity plan |
+ | `docs/research/2026-10-10-code-diff.patch` | Exact new code/config changes against the reviewed base |
++| `docs/research/2026-10-15-weekly-improvements.md` | This week's implementation, real-car results, code locations, and next comparison plan |
++| `docs/research/2026-10-15-personal-research-journal.pdf` | Original weekly Personal Research Journal by Yiming Lu |
++| `docs/research/2026-10-15-code-diff.patch` | Exact estimator and documentation changes against the previous `main` revision |
+ 
+ ## Requirements
+ 
+@@ -100,8 +107,15 @@ ros2 launch my_robot_bringup robot.launch.py
+ 
+ # Terminal 4: LiDAR-IMU Cartographer
+ ros2 launch my_cartographer_config cartographer.launch.py
++
++# Terminal 5: Cartographer-derived vehicle motion
++ros2 launch vehicle_state_estimator cartographer_velocity.launch.py
+ ```
+ 
++The estimator publishes `/cartographer_velocity/speed`, `/vx`, `/vy`,
++`/movement_direction`, and `/heading`. Its validated defaults are a `1.0 s` pose-history
++window and a `0.005 m/s` deadband.
++
+ If `port` is omitted or empty, the driver keeps the YAML-configured port (currently
+ `/dev/ttyACM1`). Find the stable device name with `ls -l /dev/serial/by-id/` and verify it
+ before launch.
+@@ -136,11 +150,12 @@ RViz checks, map saving, centerline generation, teleoperation, and pure pursuit.
+ | VESC IMU | 49.993-50.001 Hz | Stable |
+ | Hokuyo LiDAR | 10.002-10.005 Hz | Stable after duplicate driver removal |
+ | Occupancy grid `/map` | 1.000 Hz | Stable |
++| Cartographer-derived speed | 0.0 m/s while stationary; up to about 0.186 m/s during manual translation | Responsive after final tuning |
+ 
+ Cartographer was observed subscribing to both `/scan` and `/sensors/imu/raw`, while the
+ `map -> base_link` transform updated continuously. The documented sensor, TF, frequency,
+-deadband, and USB-port changes were validated on the vehicle under Linux. Quantitative
+-evaluation of the planned Cartographer-derived velocity estimator remains next-stage work.
++deadband, USB-port, and pose-derived motion changes were validated on the vehicle under Linux.
++Synchronized comparison with calibrated VESC odometry remains next-stage work.
+ 
+ ## Research record
+ 
+@@ -154,7 +169,13 @@ The detailed October 1, 2026 experiment log is available as a
+ [Personal Research Journal PDF](docs/research/2026-10-01-personal-research-journal.pdf).
+ 
+ The detailed October 10, 2026 experiment log is available as a
+-[Personla Research Journal md](docs/research/2026-10-10-weekly-improvements.md)
++[Personal Research Journal](docs/research/2026-10-10-weekly-improvements.md).
++
++[Weekly improvements (October 11-15, 2026)](docs/research/2026-10-15-weekly-improvements.md)
++documents the implemented Cartographer motion estimator, filter tuning, real-car results,
++USB recovery, and the boundary between completed work and the next synchronized comparison.
++The original report is preserved as a
++[Personal Research Journal PDF](docs/research/2026-10-15-personal-research-journal.pdf).
+ ## Contributors
+ 
+ Developed by the F1Tenth project team. LiDAR-IMU integration, Cartographer configuration,
+diff --git a/docs/OPERATIONS.md b/docs/OPERATIONS.md
+index b7a7714..e2b10b2 100644
+--- a/docs/OPERATIONS.md
++++ b/docs/OPERATIONS.md
+@@ -80,7 +80,29 @@ Confirm that localization is active:
+ ros2 run tf2_ros tf2_echo map base_link
+ ```
+ 
+-### Terminal 5: Teleoperation
++### Terminal 5: Cartographer-derived motion estimate
++
++```bash
++cd ~/newf1_ws
++source install/setup.bash
++ros2 launch vehicle_state_estimator cartographer_velocity.launch.py
++```
++
++The launch file uses the real-car validated settings: a `1.0 s` history window and a
++`0.005 m/s` deadband. Confirm all five outputs:
++
++```bash
++ros2 topic echo /cartographer_velocity/speed
++ros2 topic echo /cartographer_velocity/vx
++ros2 topic echo /cartographer_velocity/vy
++ros2 topic echo /cartographer_velocity/movement_direction
++ros2 topic echo /cartographer_velocity/heading
++```
++
++If the estimator stops publishing, first check `map -> base_link`, `/scan`, and
++`/sensors/imu/raw`. The estimator intentionally waits when Cartographer has no current TF.
++
++### Terminal 6: Teleoperation
+ 
+ ```bash
+ cd ~/newf1_ws
+@@ -155,6 +177,7 @@ ros2 run car_control pure_pursuit_tf
+ | `base_link` or `imu` frame is missing | `tf2_echo base_link imu` | Rebuild and launch `my_robot_bringup` |
+ | Cartographer has no IMU subscription | `ros2 node info /cartographer_node` | Confirm the IMU remap and `use_imu_data = true` |
+ | No `/map` output | Cartographer logs and sensor rates | Restore `/scan`, IMU, and required TF inputs |
++| No Cartographer velocity topics | `tf2_echo map base_link` and sensor publishers | Restore Cartographer TF, then restart the estimator |
+ | Vehicle does not respond | VESC driver, bridge, and topic remap | Confirm both control nodes are active |
+ 
+ ## Weekly follow-up: USB, low-speed odometry, and TF
+@@ -208,6 +231,6 @@ ros2 run tf2_ros tf2_echo map odom
+ ros2 run tf2_ros tf2_echo odom base_link
+ ```
+ 
+-The planned velocity node will differentiate timestamped poses in the continuous `odom`
+-frame. Global `map` corrections must be monitored separately; a TF publication timer is
+-not evidence of independent sensor measurements at that frequency.
++The implemented velocity node differentiates timestamped `map -> base_link` poses over a
++1.0 s window. Global map corrections can affect the estimate; the synchronized VESC comparison
++and filter-latency measurements described in the October 15 weekly record remain future work.
+diff --git a/src/vehicle_state_estimator/launch/cartographer_velocity.launch.py b/src/vehicle_state_estimator/launch/cartographer_velocity.launch.py
+new file mode 100644
+index 0000000..1c7316c
+--- /dev/null
++++ b/src/vehicle_state_estimator/launch/cartographer_velocity.launch.py
+@@ -0,0 +1,20 @@
++from launch import LaunchDescription
++from launch_ros.actions import Node
++
++
++def generate_launch_description():
++    return LaunchDescription([
++        Node(
++            package='vehicle_state_estimator',
++            executable='cartographer_velocity',
++            name='cartographer_velocity',
++            output='screen',
++            parameters=[{
++                'target_frame': 'map',
++                'source_frame': 'base_link',
++                'window_time': 1.0,
++                'deadband': 0.005,
++                'publish_rate': 20.0,
++            }],
++        ),
++    ])
+diff --git a/src/vehicle_state_estimator/package.xml b/src/vehicle_state_estimator/package.xml
+new file mode 100644
+index 0000000..07be8b5
+--- /dev/null
++++ b/src/vehicle_state_estimator/package.xml
+@@ -0,0 +1,19 @@
++<?xml version="1.0"?>
++<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
++<package format="3">
++  <name>vehicle_state_estimator</name>
++  <version>0.1.0</version>
++  <description>Estimate planar vehicle motion from Cartographer TF poses.</description>
++  <maintainer email="thswx5201314yiming@gmail.com">Yiming Lu</maintainer>
++  <license>Apache-2.0</license>
++
++  <exec_depend>rclpy</exec_depend>
++  <exec_depend>std_msgs</exec_depend>
++  <exec_depend>tf2_ros_py</exec_depend>
++
++  <test_depend>python3-pytest</test_depend>
++
++  <export>
++    <build_type>ament_python</build_type>
++  </export>
++</package>
+diff --git a/src/vehicle_state_estimator/resource/vehicle_state_estimator b/src/vehicle_state_estimator/resource/vehicle_state_estimator
+new file mode 100644
+index 0000000..8b13789
+--- /dev/null
++++ b/src/vehicle_state_estimator/resource/vehicle_state_estimator
+@@ -0,0 +1 @@
++
+diff --git a/src/vehicle_state_estimator/setup.cfg b/src/vehicle_state_estimator/setup.cfg
+new file mode 100644
+index 0000000..8b79c21
+--- /dev/null
++++ b/src/vehicle_state_estimator/setup.cfg
+@@ -0,0 +1,4 @@
++[develop]
++script_dir=$base/lib/vehicle_state_estimator
++[install]
++install_scripts=$base/lib/vehicle_state_estimator
+diff --git a/src/vehicle_state_estimator/setup.py b/src/vehicle_state_estimator/setup.py
+new file mode 100644
+index 0000000..53fc401
+--- /dev/null
++++ b/src/vehicle_state_estimator/setup.py
+@@ -0,0 +1,31 @@
++import os
++from glob import glob
++
++from setuptools import find_packages, setup
++
++
++package_name = 'vehicle_state_estimator'
++
++setup(
++    name=package_name,
++    version='0.1.0',
++    packages=find_packages(exclude=['test']),
++    data_files=[
++        ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
++        ('share/' + package_name, ['package.xml']),
++        (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
++    ],
++    install_requires=['setuptools'],
++    zip_safe=True,
++    maintainer='Yiming Lu',
++    maintainer_email='thswx5201314yiming@gmail.com',
++    description='Estimate planar vehicle motion from Cartographer TF poses.',
++    license='Apache-2.0',
++    extras_require={'test': ['pytest']},
++    entry_points={
++        'console_scripts': [
++            'cartographer_velocity = '
++            'vehicle_state_estimator.cartographer_velocity:main',
++        ],
++    },
++)
+diff --git a/src/vehicle_state_estimator/test/test_motion_math.py b/src/vehicle_state_estimator/test/test_motion_math.py
+new file mode 100644
+index 0000000..92a68bc
+--- /dev/null
++++ b/src/vehicle_state_estimator/test/test_motion_math.py
+@@ -0,0 +1,35 @@
++import math
++import unittest
++
++from vehicle_state_estimator.motion_math import (
++    estimate_planar_motion,
++    quaternion_to_yaw,
++)
++
++
++class MotionMathTest(unittest.TestCase):
++
++    def test_estimates_planar_speed_and_direction(self):
++        speed, vx, vy, direction = estimate_planar_motion(
++            0.0, 0.0, 0.3, 0.4, 1.0, 0.005)
++        self.assertAlmostEqual(speed, 0.5)
++        self.assertAlmostEqual(vx, 0.3)
++        self.assertAlmostEqual(vy, 0.4)
++        self.assertAlmostEqual(direction, 53.130102, places=6)
++
++
++    def test_deadband_zeros_stationary_jitter(self):
++        self.assertEqual(
++            estimate_planar_motion(0.0, 0.0, 0.003, 0.0, 1.0, 0.005),
++            (0.0, 0.0, 0.0, 0.0))
++
++
++    def test_quaternion_to_yaw(self):
++        yaw = math.radians(-16.0)
++        value = math.degrees(quaternion_to_yaw(
++            0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0)))
++        self.assertAlmostEqual(value, -16.0)
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/src/vehicle_state_estimator/vehicle_state_estimator/__init__.py b/src/vehicle_state_estimator/vehicle_state_estimator/__init__.py
+new file mode 100644
+index 0000000..5e8a4f4
+--- /dev/null
++++ b/src/vehicle_state_estimator/vehicle_state_estimator/__init__.py
+@@ -0,0 +1 @@
++"""Cartographer pose-derived vehicle motion estimation."""
+diff --git a/src/vehicle_state_estimator/vehicle_state_estimator/cartographer_velocity.py b/src/vehicle_state_estimator/vehicle_state_estimator/cartographer_velocity.py
+new file mode 100644
+index 0000000..c14818a
+--- /dev/null
++++ b/src/vehicle_state_estimator/vehicle_state_estimator/cartographer_velocity.py
+@@ -0,0 +1,119 @@
++"""Publish planar motion estimated from the Cartographer TF pose."""
++
++from collections import deque
++import math
++
++import rclpy
++from rclpy.duration import Duration
++from rclpy.node import Node
++from rclpy.time import Time
++from std_msgs.msg import Float64
++from tf2_ros import Buffer, TransformException, TransformListener
++
++from .motion_math import estimate_planar_motion, quaternion_to_yaw
++
++
++class CartographerVelocity(Node):
++    """Differentiate map-to-base_link poses over a configurable window."""
++
++    def __init__(self):
++        super().__init__('cartographer_velocity')
++
++        self.target_frame = self.declare_parameter('target_frame', 'map').value
++        self.source_frame = self.declare_parameter('source_frame', 'base_link').value
++        self.window_time = float(self.declare_parameter('window_time', 1.0).value)
++        self.deadband = float(self.declare_parameter('deadband', 0.005).value)
++        self.publish_rate = float(self.declare_parameter('publish_rate', 20.0).value)
++
++        if not math.isfinite(self.window_time) or self.window_time <= 0.0:
++            raise ValueError('window_time must be finite and positive')
++        if not math.isfinite(self.deadband) or self.deadband < 0.0:
++            raise ValueError('deadband must be finite and non-negative')
++        if not math.isfinite(self.publish_rate) or self.publish_rate <= 0.0:
++            raise ValueError('publish_rate must be finite and positive')
++
++        self.tf_buffer = Buffer(cache_time=Duration(seconds=max(10.0, 2.0 * self.window_time)))
++        self.tf_listener = TransformListener(self.tf_buffer, self)
++        self.samples = deque()
++        self.last_tf_stamp = None
++        self.warned_missing_tf = False
++
++        prefix = '/cartographer_velocity'
++        self.publishers = {
++            'speed': self.create_publisher(Float64, f'{prefix}/speed', 10),
++            'vx': self.create_publisher(Float64, f'{prefix}/vx', 10),
++            'vy': self.create_publisher(Float64, f'{prefix}/vy', 10),
++            'movement_direction': self.create_publisher(
++                Float64, f'{prefix}/movement_direction', 10),
++            'heading': self.create_publisher(Float64, f'{prefix}/heading', 10),
++        }
++        self.timer = self.create_timer(1.0 / self.publish_rate, self.update)
++
++        self.get_logger().info(
++            f'Estimating {self.target_frame} -> {self.source_frame} motion with '
++            f'window_time={self.window_time:.3f}s and deadband={self.deadband:.3f}m/s')
++
++    @staticmethod
++    def _stamp_seconds(stamp):
++        return float(stamp.sec) + float(stamp.nanosec) * 1e-9
++
++    def update(self):
++        try:
++            transform = self.tf_buffer.lookup_transform(
++                self.target_frame, self.source_frame, Time())
++        except TransformException as exc:
++            if not self.warned_missing_tf:
++                self.get_logger().warning(
++                    f'Waiting for {self.target_frame} -> {self.source_frame}: {exc}')
++                self.warned_missing_tf = True
++            return
++
++        stamp = self._stamp_seconds(transform.header.stamp)
++        if stamp == self.last_tf_stamp:
++            return
++        self.last_tf_stamp = stamp
++        self.warned_missing_tf = False
++
++        translation = transform.transform.translation
++        rotation = transform.transform.rotation
++        heading_deg = math.degrees(quaternion_to_yaw(
++            rotation.x, rotation.y, rotation.z, rotation.w))
++        self.samples.append((stamp, translation.x, translation.y))
++
++        while (
++                len(self.samples) > 1 and
++                stamp - self.samples[1][0] >= self.window_time):
++            self.samples.popleft()
++
++        old_stamp, old_x, old_y = self.samples[0]
++        dt = stamp - old_stamp
++        if dt < self.window_time:
++            return
++
++        speed, vx, vy, direction_deg = estimate_planar_motion(
++            old_x, old_y, translation.x, translation.y, dt, self.deadband)
++        values = {
++            'speed': speed,
++            'vx': vx,
++            'vy': vy,
++            'movement_direction': direction_deg,
++            'heading': heading_deg,
++        }
++        for name, value in values.items():
++            self.publishers[name].publish(Float64(data=value))
++
++
++def main(args=None):
++    rclpy.init(args=args)
++    node = CartographerVelocity()
++    try:
++        rclpy.spin(node)
++    except KeyboardInterrupt:
++        pass
++    finally:
++        node.destroy_node()
++        rclpy.shutdown()
++
++
++if __name__ == '__main__':
++    main()
+diff --git a/src/vehicle_state_estimator/vehicle_state_estimator/motion_math.py b/src/vehicle_state_estimator/vehicle_state_estimator/motion_math.py
+new file mode 100644
+index 0000000..7ade600
+--- /dev/null
++++ b/src/vehicle_state_estimator/vehicle_state_estimator/motion_math.py
+@@ -0,0 +1,27 @@
++"""Pure motion-estimation math used by the ROS 2 node."""
++
++import math
++
++
++def quaternion_to_yaw(x, y, z, w):
++    """Return yaw in radians from a quaternion."""
++    sin_yaw = 2.0 * (w * z + x * y)
++    cos_yaw = 1.0 - 2.0 * (y * y + z * z)
++    return math.atan2(sin_yaw, cos_yaw)
++
++
++def estimate_planar_motion(old_x, old_y, x, y, dt, deadband):
++    """Return speed, vx, vy, and movement direction for two poses."""
++    if dt <= 0.0:
++        raise ValueError('dt must be positive')
++    if deadband < 0.0:
++        raise ValueError('deadband must be non-negative')
++
++    vx = (x - old_x) / dt
++    vy = (y - old_y) / dt
++    speed = math.hypot(vx, vy)
++    if speed < deadband:
++        return 0.0, 0.0, 0.0, 0.0
++
++    direction_deg = math.degrees(math.atan2(vy, vx))
++    return speed, vx, vy, direction_deg

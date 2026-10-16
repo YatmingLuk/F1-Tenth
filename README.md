@@ -25,9 +25,9 @@ The implementation details and validation results are documented in
 
 The diagram shows the intended end-to-end architecture, from LiDAR-based mapping and
 waypoint generation to pure pursuit, overtaking decisions, VESC control, and the physical car.
-The current sensor, localization, low-speed odometry, and USB-identification changes were
-validated on the physical vehicle under Linux. Higher-level autonomous behavior and the
-Cartographer-derived velocity estimator remain the next stage of work.
+The current sensor, localization, low-speed odometry, USB-identification, and
+Cartographer-derived motion-estimation changes were validated on the physical vehicle under
+Linux. Higher-level autonomous behavior and synchronized VESC comparison remain the next stage.
 
 ### Localization data flow
 
@@ -39,6 +39,8 @@ flowchart LR
     HOKUYO[One urg_node_driver] -->|/scan| CARTO
     TF[Static TF: base_link to imu/laser] --> CARTO
     ODOM -->|/vesc/odom, publish_tf=false| COMPARE[Velocity comparison]
+    CARTO -->|map to base_link pose| STATE[vehicle_state_estimator]
+    STATE -->|speed, vx, vy, direction, heading| MOTION[Motion topics]
     CARTO -->|/map| RVIZ[RViz 2]
     CARTO -->|map to odom to base_link TF| RVIZ
 ```
@@ -51,6 +53,7 @@ flowchart LR
 | `urg_node_driver` | Runs once through `robot.launch.py` and publishes `/scan` at approximately 10 Hz |
 | Static TF publishers | Publish `base_link -> imu` and `base_link -> laser` |
 | Cartographer | Consumes `/scan` and `/sensors/imu/raw` and owns the dynamic `map -> odom -> base_link` transform |
+| `cartographer_velocity` | Differentiates `map -> base_link` over a 1.0 s window and publishes speed, map-frame velocity components, movement direction, and heading |
 | `vesc_to_odom_node` | Optional comparison source; uses configurable `speed_deadband` and must run with `publish_tf:=false` beside Cartographer |
 
 ## Repository layout
@@ -60,12 +63,16 @@ flowchart LR
 | `src/vesc` | VESC driver, messages, and Ackermann bridge |
 | `src/my_robot_bringup` | Hokuyo launch and static sensor transforms |
 | `src/my_cartographer_config` | Cartographer launch and 2D SLAM configuration |
+| `src/vehicle_state_estimator` | Cartographer pose-derived speed, velocity components, movement direction, and heading |
 | `src/car_control` | Drive bridge, waypoint logging, and pure pursuit |
 | `src/map_to_centerline` | Centerline extraction from a saved map |
 | `docs/OPERATIONS.md` | Build, launch, validation, mapping, and driving commands |
 | `docs/IMU_LIDAR_CARTOGRAPHER.md` | Sensor-fusion changes, rationale, results, and limits |
 | `docs/research/2026-10-10-weekly-improvements.md` | Weekly architecture, change locations, code excerpts, and velocity plan |
 | `docs/research/2026-10-10-code-diff.patch` | Exact new code/config changes against the reviewed base |
+| `docs/research/2026-10-15-weekly-improvements.md` | This week's implementation, real-car results, code locations, and next comparison plan |
+| `docs/research/2026-10-15-personal-research-journal.pdf` | Original weekly Personal Research Journal by Yiming Lu |
+| `docs/research/2026-10-15-code-diff.patch` | Exact estimator and documentation changes against the previous `main` revision |
 
 ## Requirements
 
@@ -100,7 +107,14 @@ ros2 launch my_robot_bringup robot.launch.py
 
 # Terminal 4: LiDAR-IMU Cartographer
 ros2 launch my_cartographer_config cartographer.launch.py
+
+# Terminal 5: Cartographer-derived vehicle motion
+ros2 launch vehicle_state_estimator cartographer_velocity.launch.py
 ```
+
+The estimator publishes `/cartographer_velocity/speed`, `/vx`, `/vy`,
+`/movement_direction`, and `/heading`. Its validated defaults are a `1.0 s` pose-history
+window and a `0.005 m/s` deadband.
 
 If `port` is omitted or empty, the driver keeps the YAML-configured port (currently
 `/dev/ttyACM1`). Find the stable device name with `ls -l /dev/serial/by-id/` and verify it
@@ -136,11 +150,12 @@ RViz checks, map saving, centerline generation, teleoperation, and pure pursuit.
 | VESC IMU | 49.993-50.001 Hz | Stable |
 | Hokuyo LiDAR | 10.002-10.005 Hz | Stable after duplicate driver removal |
 | Occupancy grid `/map` | 1.000 Hz | Stable |
+| Cartographer-derived speed | 0.0 m/s while stationary; up to about 0.186 m/s during manual translation | Responsive after final tuning |
 
 Cartographer was observed subscribing to both `/scan` and `/sensors/imu/raw`, while the
 `map -> base_link` transform updated continuously. The documented sensor, TF, frequency,
-deadband, and USB-port changes were validated on the vehicle under Linux. Quantitative
-evaluation of the planned Cartographer-derived velocity estimator remains next-stage work.
+deadband, USB-port, and pose-derived motion changes were validated on the vehicle under Linux.
+Synchronized comparison with calibrated VESC odometry remains next-stage work.
 
 ## Research record
 
@@ -154,7 +169,13 @@ The detailed October 1, 2026 experiment log is available as a
 [Personal Research Journal PDF](docs/research/2026-10-01-personal-research-journal.pdf).
 
 The detailed October 10, 2026 experiment log is available as a
-[Personla Research Journal md](docs/research/2026-10-10-weekly-improvements.md)
+[Personal Research Journal](docs/research/2026-10-10-weekly-improvements.md).
+
+[Weekly improvements (October 11-15, 2026)](docs/research/2026-10-15-weekly-improvements.md)
+documents the implemented Cartographer motion estimator, filter tuning, real-car results,
+USB recovery, and the boundary between completed work and the next synchronized comparison.
+The original report is preserved as a
+[Personal Research Journal PDF](docs/research/2026-10-15-personal-research-journal.pdf).
 ## Contributors
 
 Developed by the F1Tenth project team. LiDAR-IMU integration, Cartographer configuration,
