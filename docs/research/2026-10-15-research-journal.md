@@ -1,4 +1,4 @@
-# Weekly F1TENTH Improvements - October 11-15, 2026
+# F1TENTH Weekly Research Journal - October 11-15, 2026
 
 **Author:** Yiming Lu
 
@@ -152,6 +152,6 @@ Cartographer and the motion estimator cleanly.
 - Evaluate an EKF or `robot_localization` only after both independent estimates are synchronized
   and individually characterized.
 
-The uploaded Personal Research Journal PDF is preserved beside this file as the original weekly
+The uploaded Research Journal PDF is preserved beside this file as the original weekly
 record. This Markdown version ties its results to the exact repository locations and separates
 validated implementation from planned experiments.

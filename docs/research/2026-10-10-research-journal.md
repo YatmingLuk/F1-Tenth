@@ -1,4 +1,4 @@
-# F1TENTH 周报：传感器集成、低速 odometry 与速度估计计划
+# F1TENTH Weekly Research Journal - October 5-10, 2026
 
 Author: Yiming Lu
 
