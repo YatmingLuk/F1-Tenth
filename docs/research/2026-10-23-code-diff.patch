@@ -1,0 +1,477 @@
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+index 0000000..2e86f16
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1,2 @@
++*.pdf binary
++*.patch -whitespace
+diff --git a/README.md b/README.md
+index 1cbf7b4..95458d6 100644
+--- a/README.md
++++ b/README.md
+@@ -27,7 +27,9 @@ The diagram shows the intended end-to-end architecture, from LiDAR-based mapping
+ waypoint generation to pure pursuit, overtaking decisions, VESC control, and the physical car.
+ The current sensor, localization, low-speed odometry, USB-identification, and
+ Cartographer-derived motion-estimation changes were validated on the physical vehicle under
+-Linux. Higher-level autonomous behavior and synchronized VESC comparison remain the next stage.
++Linux. The current estimator also projects map-frame velocity onto the vehicle body axis to
++publish signed forward speed. Higher-level autonomous behavior and synchronized VESC
++calibration/fusion remain the next stage.
+ 
+ ### Localization data flow
+ 
+@@ -40,7 +42,7 @@ flowchart LR
+     TF[Static TF: base_link to imu/laser] --> CARTO
+     ODOM -->|/vesc/odom, publish_tf=false| COMPARE[Velocity comparison]
+     CARTO -->|map to base_link pose| STATE[vehicle_state_estimator]
+-    STATE -->|speed, vx, vy, direction, heading| MOTION[Motion topics]
++    STATE -->|speed, vx, vy, direction, heading, forward speed| MOTION[Motion topics]
+     CARTO -->|/map| RVIZ[RViz 2]
+     CARTO -->|map to odom to base_link TF| RVIZ
+ ```
+@@ -53,7 +55,7 @@ flowchart LR
+ | `urg_node_driver` | Runs once through `robot.launch.py` and publishes `/scan` at approximately 10 Hz |
+ | Static TF publishers | Publish `base_link -> imu` and `base_link -> laser` |
+ | Cartographer | Consumes `/scan` and `/sensors/imu/raw` and owns the dynamic `map -> odom -> base_link` transform |
+-| `cartographer_velocity` | Differentiates `map -> base_link` over a 1.0 s window and publishes speed, map-frame velocity components, movement direction, and heading |
++| `cartographer_velocity` | Differentiates `map -> base_link` over a 1.0 s window and publishes speed, map-frame velocity components, movement direction, heading, and signed forward speed |
+ | `vesc_to_odom_node` | Optional comparison source; uses configurable `speed_deadband` and must run with `publish_tf:=false` beside Cartographer |
+ 
+ ## Repository layout
+@@ -63,7 +65,7 @@ flowchart LR
+ | `src/vesc` | VESC driver, messages, and Ackermann bridge |
+ | `src/my_robot_bringup` | Hokuyo launch and static sensor transforms |
+ | `src/my_cartographer_config` | Cartographer launch and 2D SLAM configuration |
+-| `src/vehicle_state_estimator` | Cartographer pose-derived speed, velocity components, movement direction, and heading |
++| `src/vehicle_state_estimator` | Cartographer pose-derived speed, velocity components, movement direction, heading, and signed forward speed |
+ | `src/car_control` | Drive bridge, waypoint logging, and pure pursuit |
+ | `src/map_to_centerline` | Centerline extraction from a saved map |
+ | `docs/OPERATIONS.md` | Build, launch, validation, mapping, and driving commands |
+@@ -73,6 +75,9 @@ flowchart LR
+ | `docs/research/2026-10-15-weekly-improvements.md` | This week's implementation, real-car results, code locations, and next comparison plan |
+ | `docs/research/2026-10-15-personal-research-journal.pdf` | Original weekly Personal Research Journal by Yiming Lu |
+ | `docs/research/2026-10-15-code-diff.patch` | Exact estimator and documentation changes against the previous `main` revision |
++| `docs/research/2026-10-23-weekly-improvements.md` | Powered field-test results, signed forward-speed implementation, code locations, and next calibration plan |
++| `docs/research/2026-10-23-personal-research-journal.pdf` | Original October 23 Personal Research Journal by Yiming Lu |
++| `docs/research/2026-10-23-code-diff.patch` | Exact October 23 code and documentation changes against the previous `main` revision |
+ 
+ ## Requirements
+ 
+@@ -113,8 +118,9 @@ ros2 launch vehicle_state_estimator cartographer_velocity.launch.py
+ ```
+ 
+ The estimator publishes `/cartographer_velocity/speed`, `/vx`, `/vy`,
+-`/movement_direction`, and `/heading`. Its validated defaults are a `1.0 s` pose-history
+-window and a `0.005 m/s` deadband.
++`/movement_direction`, `/heading`, and `/forward_speed`. Its validated defaults are a
++`1.0 s` pose-history window and a `0.005 m/s` deadband. `forward_speed` is the map-frame
++velocity projected onto the vehicle heading, so forward and reverse motion have opposite signs.
+ 
+ If `port` is omitted or empty, the driver keeps the YAML-configured port (currently
+ `/dev/ttyACM1`). Find the stable device name with `ls -l /dev/serial/by-id/` and verify it
+@@ -150,12 +156,17 @@ RViz checks, map saving, centerline generation, teleoperation, and pure pursuit.
+ | VESC IMU | 49.993-50.001 Hz | Stable |
+ | Hokuyo LiDAR | 10.002-10.005 Hz | Stable after duplicate driver removal |
+ | Occupancy grid `/map` | 1.000 Hz | Stable |
+-| Cartographer-derived speed | 0.0 m/s while stationary; up to about 0.186 m/s during manual translation | Responsive after final tuning |
++| Cartographer-derived speed | 0.426-0.726 m/s for the reported moving samples in the powered test | Responsive during remote-controlled driving |
++| Direction-heading agreement | Within +/-10 degrees for 13 of 15 displayed powered-test samples | Internally consistent; no external ground truth |
++| Signed forward speed | Approximately +0.29 and -0.33 m/s during manual forward/reverse checks | Forward and reverse signs verified |
++| VESC comparison | VESC about -0.158 to -0.295 m/s while Cartographer forward speed was positive | Sign mismatch identified; comparison not synchronized |
+ 
+ Cartographer was observed subscribing to both `/scan` and `/sensors/imu/raw`, while the
+ `map -> base_link` transform updated continuously. The documented sensor, TF, frequency,
+ deadband, USB-port, and pose-derived motion changes were validated on the vehicle under Linux.
+-Synchronized comparison with calibrated VESC odometry remains next-stage work.
++The powered test establishes functional, real-time consistency, not absolute accuracy: no
++independent ground truth was recorded. Synchronized comparison, forward-sign alignment, and
++calibration of the provisional VESC gain `4614.0` remain next-stage work.
+ 
+ ## Research record
+ 
+@@ -176,6 +187,12 @@ documents the implemented Cartographer motion estimator, filter tuning, real-car
+ USB recovery, and the boundary between completed work and the next synchronized comparison.
+ The original report is preserved as a
+ [Personal Research Journal PDF](docs/research/2026-10-15-personal-research-journal.pdf).
++
++[Weekly improvements (October 16-23, 2026)](docs/research/2026-10-23-weekly-improvements.md)
++records the powered indoor test, the six-topic motion interface, signed forward-speed
++projection, representative field measurements, the preliminary VESC sign comparison, and the
++timestamp-aligned calibration plan. The source report is preserved as the
++[October 23 Personal Research Journal PDF](docs/research/2026-10-23-personal-research-journal.pdf).
+ ## Contributors
+ 
+ Developed by the F1Tenth project team. LiDAR-IMU integration, Cartographer configuration,
+diff --git a/docs/OPERATIONS.md b/docs/OPERATIONS.md
+index e2b10b2..48c7351 100644
+--- a/docs/OPERATIONS.md
++++ b/docs/OPERATIONS.md
+@@ -89,7 +89,7 @@ ros2 launch vehicle_state_estimator cartographer_velocity.launch.py
+ ```
+ 
+ The launch file uses the real-car validated settings: a `1.0 s` history window and a
+-`0.005 m/s` deadband. Confirm all five outputs:
++`0.005 m/s` deadband. Confirm all six outputs:
+ 
+ ```bash
+ ros2 topic echo /cartographer_velocity/speed
+@@ -97,8 +97,13 @@ ros2 topic echo /cartographer_velocity/vx
+ ros2 topic echo /cartographer_velocity/vy
+ ros2 topic echo /cartographer_velocity/movement_direction
+ ros2 topic echo /cartographer_velocity/heading
++ros2 topic echo /cartographer_velocity/forward_speed
+ ```
+ 
++`speed` is always non-negative. `forward_speed` is the map-frame velocity projected onto the
++vehicle heading; its sign distinguishes forward and reverse motion. The node log also reports
++the wrapped movement-direction-minus-heading difference used in the powered test.
++
+ If the estimator stops publishing, first check `map -> base_link`, `/scan`, and
+ `/sensors/imu/raw`. The estimator intentionally waits when Cartographer has no current TF.
+ 
+@@ -232,5 +237,8 @@ ros2 run tf2_ros tf2_echo odom base_link
+ ```
+ 
+ The implemented velocity node differentiates timestamped `map -> base_link` poses over a
+-1.0 s window. Global map corrections can affect the estimate; the synchronized VESC comparison
+-and filter-latency measurements described in the October 15 weekly record remain future work.
++1.0 s window. Global map corrections can affect the estimate. The October 23 powered test
++verified all six outputs and identified an opposite forward sign between VESC odometry and
++Cartographer. Before fusion, record ERPM, VESC speed, Cartographer speed, and an independent
++distance/time reference with ROS timestamps; then align sign, estimate delay, and calibrate the
++provisional `speed_to_erpm_gain` value `4614.0`.
+diff --git a/docs/research/2026-10-23-weekly-improvements.md b/docs/research/2026-10-23-weekly-improvements.md
+new file mode 100644
+index 0000000..747b31c
+--- /dev/null
++++ b/docs/research/2026-10-23-weekly-improvements.md
+@@ -0,0 +1,183 @@
++# Weekly F1TENTH Improvements - October 16-23, 2026
++
++**Author:** Yiming Lu
++
++**Platform:** F1TENTH, ROS 2 Humble, Linux
++
++**Validation status:** The Cartographer motion estimator, its six output topics, and the
++manual and powered tests described as completed below were run on the physical vehicle. The
++VESC comparison is preliminary because the two streams were not recorded as a synchronized
++dataset and no independent ground truth was available.
++
++## Outcome
++
++This week extended the Cartographer-based motion estimator from its first manual checks to
++powered indoor driving. The node derives whole-vehicle motion from the continuously updated
++`map -> base_link` transform and now provides:
++
++| Topic | Quantity | Unit |
++| --- | --- | --- |
++| `/cartographer_velocity/speed` | Planar speed magnitude | m/s |
++| `/cartographer_velocity/vx` | Map-frame X velocity | m/s |
++| `/cartographer_velocity/vy` | Map-frame Y velocity | m/s |
++| `/cartographer_velocity/movement_direction` | Velocity-vector direction | degrees |
++| `/cartographer_velocity/heading` | Vehicle yaw from Cartographer | degrees |
++| `/cartographer_velocity/forward_speed` | Signed velocity along the vehicle body axis | m/s |
++
++The final real-car settings remain a `1.0 s` pose-history window and a `0.005 m/s`
++deadband. The lower deadband retains a verified `0.0184 m/s` slow-motion case that the earlier
++`0.025 m/s` threshold removed.
++
++## Current architecture
++
++```mermaid
++flowchart LR
++    LIDAR[Hokuyo /scan ~10 Hz] --> CARTO[Cartographer]
++    IMU[VESC IMU /sensors/imu/raw ~50 Hz] --> CARTO
++    TF[Static base_link to laser and imu TF] --> CARTO
++    CARTO -->|map to base_link pose| EST[cartographer_velocity]
++    EST --> SPEED[speed magnitude]
++    EST --> MAPVEL[map-frame vx and vy]
++    EST --> ANGLES[movement direction and heading]
++    EST --> FORWARD[signed forward speed]
++    VESC[VESC ERPM odometry] -. unsynchronized comparison .-> COMPARE[sign, delay, and scale analysis]
++    FORWARD -. planned synchronized logging .-> COMPARE
++```
++
++Cartographer continues to own the dynamic `map -> odom -> base_link` chain. The estimator
++reads the composed `map -> base_link` transform and publishes scalar motion signals; it does
++not publish or compete for a TF link. VESC odometry remains a separate comparison source and
++must use `publish_tf:=false` beside Cartographer.
++
++## Code and change locations
++
++| Location | Change | Reason |
++| --- | --- | --- |
++| `src/vehicle_state_estimator/vehicle_state_estimator/motion_math.py` | Added body-axis projection and wrapped direction-heading difference functions | Produce signed longitudinal speed and reproduce the field-test consistency diagnostic with testable pure math |
++| `src/vehicle_state_estimator/vehicle_state_estimator/cartographer_velocity.py` | Added the sixth publisher, calculated forward speed, and logged the wrapped angular difference | Keep the repository interface aligned with the real-car validated node output |
++| `src/vehicle_state_estimator/test/test_motion_math.py` | Added forward/reverse projection and angle-wrapping cases | Check the new numerical behavior independently of ROS 2 |
++| `src/vehicle_state_estimator/package.xml`, `setup.py` | Bumped the package version from `0.1.0` to `0.2.0` | Record the added public output topic |
++| `README.md`, `docs/OPERATIONS.md` | Updated architecture, topic list, test evidence, run commands, and VESC comparison plan | Keep setup and troubleshooting instructions synchronized with the current vehicle stack |
++| `docs/research/2026-10-23-personal-research-journal.pdf` | Preserved the original weekly report | Keep the primary experiment record beside the implementation summary |
++| `docs/research/2026-10-23-code-diff.patch` | Captured the exact text changes relative to the previous `main` | Make the weekly code and documentation delta directly reviewable |
++
++## Implemented calculation
++
++For two Cartographer poses `(x1, y1, t1)` and `(x2, y2, t2)`, the map-frame velocity and
++speed magnitude are:
++
++```python
++vx = (x2 - x1) / (t2 - t1)
++vy = (y2 - y1) / (t2 - t1)
++speed = math.hypot(vx, vy)
++movement_direction_deg = math.degrees(math.atan2(vy, vx))
++```
++
++Cartographer's quaternion provides heading `theta`. The new signed longitudinal speed is the
++projection of map-frame velocity onto the vehicle's forward body axis:
++
++```python
++forward_speed = vx * math.cos(theta) + vy * math.sin(theta)
++```
++
++Positive values indicate motion along the vehicle's forward axis and negative values indicate
++reverse motion. The field-test diagnostic wraps the angle difference so values remain within a
++single revolution:
++
++```python
++difference_deg = (movement_direction_deg - heading_deg + 180.0) % 360.0 - 180.0
++```
++
++If speed is below `0.005 m/s`, the estimator publishes zero for speed, `vx`, `vy`, movement
++direction, and forward speed. Heading still follows the latest Cartographer orientation.
++
++## Why this change was needed
++
++Speed magnitude alone cannot distinguish forward from reverse. Map-frame `vx` and `vy` also
++change meaning as the track orientation changes. Projecting them onto the body heading provides
++the signed longitudinal quantity needed for comparison with motor ERPM and for a later fusion
++stage.
++
++Movement direction and heading remain separate measurements. Their wrapped difference is a
++useful forward-motion consistency check, but it can approach 180 degrees during reverse motion
++and may differ during slip, lateral repositioning, or localization corrections.
++
++## Physical-vehicle validation
++
++### Sensor and transform inputs
++
++| Input | Observed configuration |
++| --- | --- |
++| Hokuyo LiDAR | `/scan`, approximately 10 Hz |
++| VESC IMU | `/sensors/imu/raw`, approximately 50 Hz |
++| Cartographer pose | Continuously updated `map -> base_link` transform |
++| Averaging window | 1.0 s |
++| Speed deadband | 0.005 m/s |
++
++### Manual forward and reverse checks
++
++Manual translation produced speed values from rest through `0.0449`, `0.0734`, `0.1264`,
++and `0.1859 m/s`. Signed forward speed reached approximately `+0.29 m/s` and `-0.33 m/s`,
++confirming that the body-axis projection distinguishes forward and reverse motion.
++
++### Powered remote-controlled test
++
++In the representative 15-sample terminal sequence, moving speed ranged from `0.426` to
++`0.726 m/s`. Thirteen of the fifteen displayed samples had a wrapped movement-direction and
++heading difference within `+/-10 degrees`. Selected samples are preserved below:
++
++| Speed | `vx` | `vy` | Movement direction | Heading | Difference |
++| ---: | ---: | ---: | ---: | ---: | ---: |
++| 0.564 | -0.534 | -0.182 | -161.23 deg | -154.57 deg | -6.66 deg |
++| 0.609 | -0.280 | -0.541 | -117.37 deg | -108.26 deg | -9.11 deg |
++| 0.726 | 0.233 | -0.687 | -71.23 deg | -62.36 deg | -8.87 deg |
++| 0.630 | 0.494 | -0.391 | -38.39 deg | -37.63 deg | -0.76 deg |
++| 0.467 | 0.353 | -0.306 | -40.86 deg | -39.02 deg | -1.84 deg |
++
++These measurements establish responsive output and internal consistency. They are not an
++absolute-accuracy result because no motion-capture system, encoder reference, or other
++independent ground truth was recorded.
++
++## Preliminary VESC comparison
++
++The current VESC odometry configuration uses motor ERPM with the provisional
++`speed_to_erpm_gain` value `4614.0`. In a forward-only check, VESC reported approximately
++`-0.158` to `-0.295 m/s`, while Cartographer forward speed was positive. The forward signs
++therefore need alignment.
++
++Both measurements were a few tenths of a metre per second, but that order-of-magnitude
++agreement is not a calibration result. The values were observed from unsynchronized output,
++so delay, scale, bias, and residual statistics cannot yet be calculated.
++
++## Build and run
++
++```bash
++cd ~/newf1_ws
++colcon build --packages-select vehicle_state_estimator --symlink-install
++source install/setup.bash
++ros2 launch vehicle_state_estimator cartographer_velocity.launch.py
++```
++
++Inspect the six outputs in separate terminals or with a synchronized logger:
++
++```bash
++ros2 topic echo /cartographer_velocity/speed
++ros2 topic echo /cartographer_velocity/vx
++ros2 topic echo /cartographer_velocity/vy
++ros2 topic echo /cartographer_velocity/movement_direction
++ros2 topic echo /cartographer_velocity/heading
++ros2 topic echo /cartographer_velocity/forward_speed
++```
++
++## Next experiment
++
++1. Record raw ERPM, VESC odometry speed, Cartographer forward speed, and an independent
++   distance/time reference with ROS timestamps.
++2. Estimate time delay and align the forward sign before comparing amplitudes.
++3. Use controlled measured-distance forward and reverse runs to replace the provisional gain
++   with a regression-derived scale and bias.
++4. Repeat runs to quantify uncertainty, then inspect residuals during turns and wheel slip.
++5. Implement VESC-Cartographer fusion only after both sources are individually characterized.
++
++The original Personal Research Journal PDF is stored beside this file. The patch file records
++the exact repository text changes against commit `b0c7224`, the previous `main` baseline.
+diff --git a/src/vehicle_state_estimator/package.xml b/src/vehicle_state_estimator/package.xml
+index 07be8b5..1c4d738 100644
+--- a/src/vehicle_state_estimator/package.xml
++++ b/src/vehicle_state_estimator/package.xml
+@@ -2,7 +2,7 @@
+ <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+ <package format="3">
+   <name>vehicle_state_estimator</name>
+-  <version>0.1.0</version>
++  <version>0.2.0</version>
+   <description>Estimate planar vehicle motion from Cartographer TF poses.</description>
+   <maintainer email="thswx5201314yiming@gmail.com">Yiming Lu</maintainer>
+   <license>Apache-2.0</license>
+diff --git a/src/vehicle_state_estimator/setup.py b/src/vehicle_state_estimator/setup.py
+index 53fc401..1465243 100644
+--- a/src/vehicle_state_estimator/setup.py
++++ b/src/vehicle_state_estimator/setup.py
+@@ -8,7 +8,7 @@ package_name = 'vehicle_state_estimator'
+ 
+ setup(
+     name=package_name,
+-    version='0.1.0',
++    version='0.2.0',
+     packages=find_packages(exclude=['test']),
+     data_files=[
+         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
+diff --git a/src/vehicle_state_estimator/test/test_motion_math.py b/src/vehicle_state_estimator/test/test_motion_math.py
+index 92a68bc..6adfdd9 100644
+--- a/src/vehicle_state_estimator/test/test_motion_math.py
++++ b/src/vehicle_state_estimator/test/test_motion_math.py
+@@ -3,7 +3,9 @@ import unittest
+ 
+ from vehicle_state_estimator.motion_math import (
+     estimate_planar_motion,
++    project_forward_speed,
+     quaternion_to_yaw,
++    wrapped_angle_difference_degrees,
+ )
+ 
+ 
+@@ -30,6 +32,20 @@ class MotionMathTest(unittest.TestCase):
+             0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0)))
+         self.assertAlmostEqual(value, -16.0)
+ 
++    def test_projects_signed_forward_speed(self):
++        heading = math.radians(30.0)
++        speed = 0.6
++        vx = speed * math.cos(heading)
++        vy = speed * math.sin(heading)
++        self.assertAlmostEqual(project_forward_speed(vx, vy, heading), speed)
++        self.assertAlmostEqual(project_forward_speed(-vx, -vy, heading), -speed)
++
++    def test_wraps_direction_heading_difference(self):
++        self.assertAlmostEqual(
++            wrapped_angle_difference_degrees(-161.23, -154.57), -6.66)
++        self.assertAlmostEqual(
++            wrapped_angle_difference_degrees(179.0, -179.0), -2.0)
++
+ 
+ if __name__ == '__main__':
+     unittest.main()
+diff --git a/src/vehicle_state_estimator/vehicle_state_estimator/cartographer_velocity.py b/src/vehicle_state_estimator/vehicle_state_estimator/cartographer_velocity.py
+index c14818a..0da05eb 100644
+--- a/src/vehicle_state_estimator/vehicle_state_estimator/cartographer_velocity.py
++++ b/src/vehicle_state_estimator/vehicle_state_estimator/cartographer_velocity.py
+@@ -10,7 +10,12 @@ from rclpy.time import Time
+ from std_msgs.msg import Float64
+ from tf2_ros import Buffer, TransformException, TransformListener
+ 
+-from .motion_math import estimate_planar_motion, quaternion_to_yaw
++from .motion_math import (
++    estimate_planar_motion,
++    project_forward_speed,
++    quaternion_to_yaw,
++    wrapped_angle_difference_degrees,
++)
+ 
+ 
+ class CartographerVelocity(Node):
+@@ -46,6 +51,8 @@ class CartographerVelocity(Node):
+             'movement_direction': self.create_publisher(
+                 Float64, f'{prefix}/movement_direction', 10),
+             'heading': self.create_publisher(Float64, f'{prefix}/heading', 10),
++            'forward_speed': self.create_publisher(
++                Float64, f'{prefix}/forward_speed', 10),
+         }
+         self.timer = self.create_timer(1.0 / self.publish_rate, self.update)
+ 
+@@ -76,8 +83,9 @@ class CartographerVelocity(Node):
+ 
+         translation = transform.transform.translation
+         rotation = transform.transform.rotation
+-        heading_deg = math.degrees(quaternion_to_yaw(
+-            rotation.x, rotation.y, rotation.z, rotation.w))
++        heading = quaternion_to_yaw(
++            rotation.x, rotation.y, rotation.z, rotation.w)
++        heading_deg = math.degrees(heading)
+         self.samples.append((stamp, translation.x, translation.y))
+ 
+         while (
+@@ -92,16 +100,26 @@ class CartographerVelocity(Node):
+ 
+         speed, vx, vy, direction_deg = estimate_planar_motion(
+             old_x, old_y, translation.x, translation.y, dt, self.deadband)
++        forward_speed = project_forward_speed(vx, vy, heading)
++        difference_deg = wrapped_angle_difference_degrees(
++            direction_deg, heading_deg)
+         values = {
+             'speed': speed,
+             'vx': vx,
+             'vy': vy,
+             'movement_direction': direction_deg,
+             'heading': heading_deg,
++            'forward_speed': forward_speed,
+         }
+         for name, value in values.items():
+             self.publishers[name].publish(Float64(data=value))
+ 
++        self.get_logger().info(
++            f'Speed: {speed:.3f} m/s | Vx: {vx:.3f} m/s | '
++            f'Vy: {vy:.3f} m/s | Movement Direction: {direction_deg:.2f} deg | '
++            f'Heading: {heading_deg:.2f} deg | Difference: '
++            f'{difference_deg:.2f} deg | Forward Speed: {forward_speed:.3f} m/s')
++
+ 
+ def main(args=None):
+     rclpy.init(args=args)
+diff --git a/src/vehicle_state_estimator/vehicle_state_estimator/motion_math.py b/src/vehicle_state_estimator/vehicle_state_estimator/motion_math.py
+index 7ade600..2d015ca 100644
+--- a/src/vehicle_state_estimator/vehicle_state_estimator/motion_math.py
++++ b/src/vehicle_state_estimator/vehicle_state_estimator/motion_math.py
+@@ -25,3 +25,13 @@ def estimate_planar_motion(old_x, old_y, x, y, dt, deadband):
+ 
+     direction_deg = math.degrees(math.atan2(vy, vx))
+     return speed, vx, vy, direction_deg
++
++
++def project_forward_speed(vx, vy, heading):
++    """Project map-frame velocity onto the vehicle's forward body axis."""
++    return vx * math.cos(heading) + vy * math.sin(heading)
++
++
++def wrapped_angle_difference_degrees(direction, heading):
++    """Return direction minus heading, wrapped to [-180, 180) degrees."""
++    return (direction - heading + 180.0) % 360.0 - 180.0

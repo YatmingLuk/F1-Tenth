@@ -10,7 +10,12 @@ from rclpy.time import Time
 from std_msgs.msg import Float64
 from tf2_ros import Buffer, TransformException, TransformListener
 
-from .motion_math import estimate_planar_motion, quaternion_to_yaw
+from .motion_math import (
+    estimate_planar_motion,
+    project_forward_speed,
+    quaternion_to_yaw,
+    wrapped_angle_difference_degrees,
+)
 
 
 class CartographerVelocity(Node):
@@ -46,6 +51,8 @@ class CartographerVelocity(Node):
             'movement_direction': self.create_publisher(
                 Float64, f'{prefix}/movement_direction', 10),
             'heading': self.create_publisher(Float64, f'{prefix}/heading', 10),
+            'forward_speed': self.create_publisher(
+                Float64, f'{prefix}/forward_speed', 10),
         }
         self.timer = self.create_timer(1.0 / self.publish_rate, self.update)
 
@@ -76,8 +83,9 @@ class CartographerVelocity(Node):
 
         translation = transform.transform.translation
         rotation = transform.transform.rotation
-        heading_deg = math.degrees(quaternion_to_yaw(
-            rotation.x, rotation.y, rotation.z, rotation.w))
+        heading = quaternion_to_yaw(
+            rotation.x, rotation.y, rotation.z, rotation.w)
+        heading_deg = math.degrees(heading)
         self.samples.append((stamp, translation.x, translation.y))
 
         while (
@@ -92,15 +100,25 @@ class CartographerVelocity(Node):
 
         speed, vx, vy, direction_deg = estimate_planar_motion(
             old_x, old_y, translation.x, translation.y, dt, self.deadband)
+        forward_speed = project_forward_speed(vx, vy, heading)
+        difference_deg = wrapped_angle_difference_degrees(
+            direction_deg, heading_deg)
         values = {
             'speed': speed,
             'vx': vx,
             'vy': vy,
             'movement_direction': direction_deg,
             'heading': heading_deg,
+            'forward_speed': forward_speed,
         }
         for name, value in values.items():
             self.publishers[name].publish(Float64(data=value))
+
+        self.get_logger().info(
+            f'Speed: {speed:.3f} m/s | Vx: {vx:.3f} m/s | '
+            f'Vy: {vy:.3f} m/s | Movement Direction: {direction_deg:.2f} deg | '
+            f'Heading: {heading_deg:.2f} deg | Difference: '
+            f'{difference_deg:.2f} deg | Forward Speed: {forward_speed:.3f} m/s')
 
 
 def main(args=None):

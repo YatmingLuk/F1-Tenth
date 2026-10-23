@@ -89,7 +89,7 @@ ros2 launch vehicle_state_estimator cartographer_velocity.launch.py
 ```
 
 The launch file uses the real-car validated settings: a `1.0 s` history window and a
-`0.005 m/s` deadband. Confirm all five outputs:
+`0.005 m/s` deadband. Confirm all six outputs:
 
 ```bash
 ros2 topic echo /cartographer_velocity/speed
@@ -97,7 +97,12 @@ ros2 topic echo /cartographer_velocity/vx
 ros2 topic echo /cartographer_velocity/vy
 ros2 topic echo /cartographer_velocity/movement_direction
 ros2 topic echo /cartographer_velocity/heading
+ros2 topic echo /cartographer_velocity/forward_speed
 ```
+
+`speed` is always non-negative. `forward_speed` is the map-frame velocity projected onto the
+vehicle heading; its sign distinguishes forward and reverse motion. The node log also reports
+the wrapped movement-direction-minus-heading difference used in the powered test.
 
 If the estimator stops publishing, first check `map -> base_link`, `/scan`, and
 `/sensors/imu/raw`. The estimator intentionally waits when Cartographer has no current TF.
@@ -232,5 +237,8 @@ ros2 run tf2_ros tf2_echo odom base_link
 ```
 
 The implemented velocity node differentiates timestamped `map -> base_link` poses over a
-1.0 s window. Global map corrections can affect the estimate; the synchronized VESC comparison
-and filter-latency measurements described in the October 15 weekly record remain future work.
+1.0 s window. Global map corrections can affect the estimate. The October 23 powered test
+verified all six outputs and identified an opposite forward sign between VESC odometry and
+Cartographer. Before fusion, record ERPM, VESC speed, Cartographer speed, and an independent
+distance/time reference with ROS timestamps; then align sign, estimate delay, and calibrate the
+provisional `speed_to_erpm_gain` value `4614.0`.
