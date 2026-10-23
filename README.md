@@ -164,14 +164,15 @@ calibration of the provisional VESC gain `4614.0` remain next-stage work.
 ## Research record
 
 Research Journal files follow one naming rule: `YYYY-MM-DD-research-journal.{md,pdf}`.
-The date is the reporting date, and Markdown/PDF links on the same row belong to the same week.
+PDF names use the journal's report date. Repository Markdown notes and code-diff snapshots retain
+their original record dates when they were prepared later in the same weekly cycle.
 
 | Report date | Research Journal | Code diff | Main focus |
 | :--- | :--- | :--- | :--- |
 | **2026-10-01** | [PDF](docs/research/2026-10-01-research-journal.pdf) | [Integration patch](docs/research/2026-10-04-integration-code-diff.patch) | Initial VESC IMU and LiDAR-Cartographer integration |
-| **2026-10-10** | [Markdown](docs/research/2026-10-10-research-journal.md) | [Patch](docs/research/2026-10-10-code-diff.patch) | ROS-unit IMU, TF, LiDAR frequency, odometry deadband, and USB identification |
-| **2026-10-15** | [Markdown](docs/research/2026-10-15-research-journal.md) · [PDF](docs/research/2026-10-15-research-journal.pdf) | [Patch](docs/research/2026-10-15-code-diff.patch) | Cartographer motion estimator and low-speed filter tuning |
-| **2026-10-23** | [Markdown](docs/research/2026-10-23-research-journal.md) · [PDF](docs/research/2026-10-23-research-journal.pdf) | [Patch](docs/research/2026-10-23-code-diff.patch) | Powered validation, signed forward speed, and the VESC calibration plan |
+| **2026-10-08** | [PDF](docs/research/2026-10-08-research-journal.pdf) · [Technical note (Oct 10)](docs/research/2026-10-10-research-journal.md) | [Patch (Oct 10)](docs/research/2026-10-10-code-diff.patch) | VESC telemetry, low-speed odometry visibility, and the calibration plan |
+| **2026-10-15** | [PDF](docs/research/2026-10-15-research-journal.pdf) · [Technical note](docs/research/2026-10-15-research-journal.md) | [Patch](docs/research/2026-10-15-code-diff.patch) | Cartographer motion estimator and low-speed filter tuning |
+| **2026-10-23** | [PDF](docs/research/2026-10-23-research-journal.pdf) · [Technical note](docs/research/2026-10-23-research-journal.md) | [Patch](docs/research/2026-10-23-code-diff.patch) | Powered validation, signed forward speed, and the VESC calibration plan |
 
 See the [research archive index](docs/research/README.md) for the naming convention and the
 complete record list.
