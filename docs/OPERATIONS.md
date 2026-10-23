@@ -187,7 +187,7 @@ ros2 run car_control pure_pursuit_tf
 
 ## Weekly follow-up: USB, low-speed odometry, and TF
 
-The [October 5-10 weekly record](research/2026-10-10-weekly-improvements.md) contains
+The [October 10 Research Journal](research/2026-10-10-research-journal.md) contains
 the architecture, code locations, reasons, full code diffs, historical measurements,
 and the next Cartographer-only velocity experiment.
 

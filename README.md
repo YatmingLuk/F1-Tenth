@@ -70,14 +70,7 @@ flowchart LR
 | `src/map_to_centerline` | Centerline extraction from a saved map |
 | `docs/OPERATIONS.md` | Build, launch, validation, mapping, and driving commands |
 | `docs/IMU_LIDAR_CARTOGRAPHER.md` | Sensor-fusion changes, rationale, results, and limits |
-| `docs/research/2026-10-10-weekly-improvements.md` | Weekly architecture, change locations, code excerpts, and velocity plan |
-| `docs/research/2026-10-10-code-diff.patch` | Exact new code/config changes against the reviewed base |
-| `docs/research/2026-10-15-weekly-improvements.md` | This week's implementation, real-car results, code locations, and next comparison plan |
-| `docs/research/2026-10-15-personal-research-journal.pdf` | Original weekly Personal Research Journal by Yiming Lu |
-| `docs/research/2026-10-15-code-diff.patch` | Exact estimator and documentation changes against the previous `main` revision |
-| `docs/research/2026-10-23-weekly-improvements.md` | Powered field-test results, signed forward-speed implementation, code locations, and next calibration plan |
-| `docs/research/2026-10-23-personal-research-journal.pdf` | Original October 23 Personal Research Journal by Yiming Lu |
-| `docs/research/2026-10-23-code-diff.patch` | Exact October 23 code and documentation changes against the previous `main` revision |
+| `docs/research` | Weekly research journals, original PDFs, and code-diff archive |
 
 ## Requirements
 
@@ -170,29 +163,19 @@ calibration of the provisional VESC gain `4614.0` remain next-stage work.
 
 ## Research record
 
-[Weekly improvements (October 5-10, 2026)](docs/research/2026-10-10-weekly-improvements.md)
-consolidates existing sensor integration with configurable low-speed odometry, USB identification,
-and the next Cartographer-only velocity experiment. The recorded code and architecture changes
-were validated on the physical vehicle under Linux; the velocity estimator is a planned follow-up.
+Research Journal files follow one naming rule: `YYYY-MM-DD-research-journal.{md,pdf}`.
+The date is the reporting date, and Markdown/PDF links on the same row belong to the same week.
 
+| Report date | Research Journal | Code diff | Main focus |
+| :--- | :--- | :--- | :--- |
+| **2026-10-01** | [PDF](docs/research/2026-10-01-research-journal.pdf) | [Integration patch](docs/research/2026-10-04-integration-code-diff.patch) | Initial VESC IMU and LiDAR-Cartographer integration |
+| **2026-10-10** | [Markdown](docs/research/2026-10-10-research-journal.md) | [Patch](docs/research/2026-10-10-code-diff.patch) | ROS-unit IMU, TF, LiDAR frequency, odometry deadband, and USB identification |
+| **2026-10-15** | [Markdown](docs/research/2026-10-15-research-journal.md) · [PDF](docs/research/2026-10-15-research-journal.pdf) | [Patch](docs/research/2026-10-15-code-diff.patch) | Cartographer motion estimator and low-speed filter tuning |
+| **2026-10-23** | [Markdown](docs/research/2026-10-23-research-journal.md) · [PDF](docs/research/2026-10-23-research-journal.pdf) | [Patch](docs/research/2026-10-23-code-diff.patch) | Powered validation, signed forward speed, and the VESC calibration plan |
 
-The detailed October 1, 2026 experiment log is available as a
-[Personal Research Journal PDF](docs/research/2026-10-01-personal-research-journal.pdf).
+See the [research archive index](docs/research/README.md) for the naming convention and the
+complete record list.
 
-The detailed October 10, 2026 experiment log is available as a
-[Personal Research Journal](docs/research/2026-10-10-weekly-improvements.md).
-
-[Weekly improvements (October 11-15, 2026)](docs/research/2026-10-15-weekly-improvements.md)
-documents the implemented Cartographer motion estimator, filter tuning, real-car results,
-USB recovery, and the boundary between completed work and the next synchronized comparison.
-The original report is preserved as a
-[Personal Research Journal PDF](docs/research/2026-10-15-personal-research-journal.pdf).
-
-[Weekly improvements (October 16-23, 2026)](docs/research/2026-10-23-weekly-improvements.md)
-records the powered indoor test, the six-topic motion interface, signed forward-speed
-projection, representative field measurements, the preliminary VESC sign comparison, and the
-timestamp-aligned calibration plan. The source report is preserved as the
-[October 23 Personal Research Journal PDF](docs/research/2026-10-23-personal-research-journal.pdf).
 ## Contributors
 
 Developed by the F1Tenth project team. LiDAR-IMU integration, Cartographer configuration,

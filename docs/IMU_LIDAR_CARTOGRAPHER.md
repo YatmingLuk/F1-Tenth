@@ -130,11 +130,11 @@ For RViz 2, use `map` as the fixed frame and display `/map`, `/scan`, and TF.
 - Validate a reliable VESC or odometry source for ego-vehicle speed.
 
 The corresponding experiment log is stored in
-[`docs/research/2026-10-01-personal-research-journal.pdf`](research/2026-10-01-personal-research-journal.pdf).
+[`docs/research/2026-10-01-research-journal.pdf`](research/2026-10-01-research-journal.pdf).
 
 ## Weekly follow-up
 
-See the [October 5-10 weekly record](research/2026-10-10-weekly-improvements.md) for
+See the [October 10 Research Journal](research/2026-10-10-research-journal.md) for
 code provenance, configurable odometry deadband, USB diagnostics, and the next velocity
 estimation experiment. Cartographer currently owns both dynamic TF links; keep VESC
 `publish_tf = false` and use a separate comparison topic for VESC odometry.

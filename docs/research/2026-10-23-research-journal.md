@@ -1,4 +1,4 @@
-# Weekly F1TENTH Improvements - October 16-23, 2026
+# F1TENTH Weekly Research Journal - October 16-23, 2026
 
 **Author:** Yiming Lu
 
@@ -58,7 +58,7 @@ must use `publish_tf:=false` beside Cartographer.
 | `src/vehicle_state_estimator/test/test_motion_math.py` | Added forward/reverse projection and angle-wrapping cases | Check the new numerical behavior independently of ROS 2 |
 | `src/vehicle_state_estimator/package.xml`, `setup.py` | Bumped the package version from `0.1.0` to `0.2.0` | Record the added public output topic |
 | `README.md`, `docs/OPERATIONS.md` | Updated architecture, topic list, test evidence, run commands, and VESC comparison plan | Keep setup and troubleshooting instructions synchronized with the current vehicle stack |
-| `docs/research/2026-10-23-personal-research-journal.pdf` | Preserved the original weekly report | Keep the primary experiment record beside the implementation summary |
+| `docs/research/2026-10-23-research-journal.pdf` | Preserved the original weekly report | Keep the primary experiment record beside the implementation summary |
 | `docs/research/2026-10-23-code-diff.patch` | Captured the exact text changes relative to the previous `main` | Make the weekly code and documentation delta directly reviewable |
 
 ## Implemented calculation
@@ -179,5 +179,5 @@ ros2 topic echo /cartographer_velocity/forward_speed
 4. Repeat runs to quantify uncertainty, then inspect residuals during turns and wheel slip.
 5. Implement VESC-Cartographer fusion only after both sources are individually characterized.
 
-The original Personal Research Journal PDF is stored beside this file. The patch file records
+The original Research Journal PDF is stored beside this file. The patch file records
 the exact repository text changes against commit `b0c7224`, the previous `main` baseline.
