@@ -25,3 +25,13 @@ def estimate_planar_motion(old_x, old_y, x, y, dt, deadband):
 
     direction_deg = math.degrees(math.atan2(vy, vx))
     return speed, vx, vy, direction_deg
+
+
+def project_forward_speed(vx, vy, heading):
+    """Project map-frame velocity onto the vehicle's forward body axis."""
+    return vx * math.cos(heading) + vy * math.sin(heading)
+
+
+def wrapped_angle_difference_degrees(direction, heading):
+    """Return direction minus heading, wrapped to [-180, 180) degrees."""
+    return (direction - heading + 180.0) % 360.0 - 180.0

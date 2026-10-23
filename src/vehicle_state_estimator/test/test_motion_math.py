@@ -3,7 +3,9 @@ import unittest
 
 from vehicle_state_estimator.motion_math import (
     estimate_planar_motion,
+    project_forward_speed,
     quaternion_to_yaw,
+    wrapped_angle_difference_degrees,
 )
 
 
@@ -29,6 +31,20 @@ class MotionMathTest(unittest.TestCase):
         value = math.degrees(quaternion_to_yaw(
             0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0)))
         self.assertAlmostEqual(value, -16.0)
+
+    def test_projects_signed_forward_speed(self):
+        heading = math.radians(30.0)
+        speed = 0.6
+        vx = speed * math.cos(heading)
+        vy = speed * math.sin(heading)
+        self.assertAlmostEqual(project_forward_speed(vx, vy, heading), speed)
+        self.assertAlmostEqual(project_forward_speed(-vx, -vy, heading), -speed)
+
+    def test_wraps_direction_heading_difference(self):
+        self.assertAlmostEqual(
+            wrapped_angle_difference_degrees(-161.23, -154.57), -6.66)
+        self.assertAlmostEqual(
+            wrapped_angle_difference_degrees(179.0, -179.0), -2.0)
 
 
 if __name__ == '__main__':
