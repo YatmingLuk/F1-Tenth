@@ -1,8 +1,20 @@
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
-    # VESC is started separately through its configurable driver launch file.
+    # Start the existing configurable VESC driver once as part of sensor bringup.
+    vesc = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(PathJoinSubstitution([
+            FindPackageShare('vesc_driver'), 'launch', 'vesc_driver_node.launch.py'
+        ])),
+        launch_arguments={'port': LaunchConfiguration('vesc_port')}.items(),
+        condition=IfCondition(LaunchConfiguration('start_vesc')),
+    )
     # Hokuyo LiDAR driver.
     urg_node = Node(
         package='urg_node',
@@ -34,6 +46,11 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        DeclareLaunchArgument('start_vesc', default_value='true',
+                              description='Start VESC with sensor bringup.'),
+        DeclareLaunchArgument('vesc_port', default_value='',
+                              description='Verified VESC USB path; empty uses driver YAML.'),
+        vesc,
         urg_node,
         static_tf_base_to_laser,
         static_tf_base_to_imu,

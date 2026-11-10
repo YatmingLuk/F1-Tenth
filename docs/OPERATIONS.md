@@ -39,29 +39,18 @@ Run the `source` command in every new terminal.
 
 ## 3. Launch the vehicle stack
 
-### Terminal 1: VESC driver and IMU
+### Terminal 1: VESC driver, LiDAR, and sensor TF
 
 ```bash
 cd ~/newf1_ws
 source install/setup.bash
-ros2 launch vesc_driver vesc_driver_node.launch.py
+VESC_PORT='/dev/serial/by-id/<confirmed-vesc-device>'
+ros2 launch my_robot_bringup robot.launch.py vesc_port:="$VESC_PORT"
 ```
 
-### Terminal 2: Ackermann-to-VESC bridge
-
-```bash
-cd ~/newf1_ws
-source install/setup.bash
-ros2 run car_control drive_to_vesc_bridge --ros-args -r /drive:=/ackermann_cmd
-```
-
-### Terminal 3: LiDAR and sensor TF
-
-```bash
-cd ~/newf1_ws
-source install/setup.bash
-ros2 launch my_robot_bringup robot.launch.py
-```
+For a separately launched VESC driver, set `start_vesc:=false` on robot bringup. Do not
+start a second driver on the same USB device. Keep the drive bridge stopped for the debug
+procedure below; the reported Pure Pursuit test did not actuate the vehicle.
 
 `Streaming data` in the driver output indicates that the LiDAR is running. Do not start a
 second `urg_node` manually; only one driver process should access the Hokuyo sensor.
@@ -143,42 +132,76 @@ Set:
 - LaserScan topic: `/scan`
 - TF display: enabled
 
-## 5. Save the map
+## 5. Save a same-session map
 
-After driving several laps and obtaining a stable map:
+After mapping a closed track and obtaining a stable map, finish the active trajectory and
+save the state. The reported trajectory ID was `0`; check the active ID on the running system.
+Finishing a trajectory stops it from accepting new data.
 
 ```bash
-ros2 run nav2_map_server map_saver_cli -f ~/my_map --ros-args -p save_map_timeout:=20.0
+ros2 service call /finish_trajectory cartographer_ros_msgs/srv/FinishTrajectory "{trajectory_id: 0}"
+ros2 service call /write_state cartographer_ros_msgs/srv/WriteState "{filename: '$HOME/track_20261105.pbstream', include_unfinished_submaps: true}"
+ros2 run cartographer_ros cartographer_pbstream_to_ros_map \
+  -pbstream_filename="$HOME/track_20261105.pbstream" \
+  -map_filestem="$HOME/track_20261105" -resolution=0.05
 ```
+
+The `.pbstream`, PGM/YAML and centerline must all come from the same mapping session.
+For localization, load that matching saved state using a suitable Cartographer localization
+configuration. The current `my_cartographer_config` launch does not yet provide a saved-state
+localization option; loading and validating one is a next-stage task. Simply reusing the frame
+name `map` does not align different session origins.
+The laboratory save and conversion succeeded; closed-track mapping and localization remain pending.
 
 ## 6. Generate and inspect the centerline
 
 ```bash
-ros2 run map_to_centerline generate_centerline
+PYTHONNOUSERSITE=1 ros2 run map_to_centerline generate_centerline --ros-args \
+  -p yaml_path:="$HOME/track_20261105.yaml" \
+  -p png_path:="$HOME/track_20261105.pgm" \
+  -p output_csv:="$HOME/track_20261105_waypoints.csv"
 ```
 
 Check that the waypoint file contains data:
 
 ```bash
-head ~/newf1_ws/src/car_control/car_control/waypoints/waypoints.csv
-tail ~/newf1_ws/src/car_control/car_control/waypoints/waypoints.csv
+head "$HOME/track_20261105_waypoints.csv"
+tail "$HOME/track_20261105_waypoints.csv"
+wc -l "$HOME/track_20261105_waypoints.csv"
 ```
 
-## 7. Run pure pursuit
+The `PYTHONNOUSERSITE=1` workaround uses the compatible system NumPy/OpenCV pair for this
+command only. The tested old-map result had 500 numeric waypoints plus one header line; it is
+not suitable for a different session. A laboratory map without a closed loop did not yield a
+centerline, consistent with this generator's geometry requirements.
 
-Stop the teleoperation process before starting autonomous path following:
+## 7. Debug pure pursuit
+
+Keep motor actuation disabled and stop teleoperation. Use a centerline generated from the
+same saved state used for localization. Redirect the controller output to a debug-only topic:
 
 ```bash
 cd ~/newf1_ws
 source install/setup.bash
-ros2 run car_control pure_pursuit_tf
+ros2 run car_control pure_pursuit_tf --ros-args \
+  -p waypoint_csv:="$HOME/track_20261105_waypoints.csv" \
+  -r /ackermann_cmd:=/debug_ackermann_cmd
 ```
+
+Inspect `/debug_ackermann_cmd`, the vehicle pose, waypoint markers, target location, and
+steering around the full loop. In the reported mismatch the vehicle was near `(0.09, -0.01)` m,
+but the target was `(3.13, 8.71)` m and steering reached `0.450` rad. Those results demonstrate
+the mismatch, not successful path following. Confirm near targets and non-saturated steering
+before a supervised low-speed test; that closed-track test remains pending.
 
 ## Troubleshooting quick reference
 
 | Symptom | Check | Likely action |
 | --- | --- | --- |
 | `/scan` is far below 10 Hz | Publisher count and `urg_node_driver` processes | Stop the duplicate LiDAR driver |
+| `/sensors/imu/raw` has no publisher | `ros2 topic info /sensors/imu/raw --verbose` and VESC launch | Start the VESC driver once and confirm the USB path |
+| `import cv2` fails with NumPy ABI errors | Check system and user-site NumPy/OpenCV versions | Use `PYTHONNOUSERSITE=1` for centerline generation; avoid global package changes |
+| Pure Pursuit target is far away or steering saturates | Compare waypoint bounds to active map and pose | Regenerate from the same PBStream; keep output on the debug topic |
 | `base_link` or `imu` frame is missing | `tf2_echo base_link imu` | Rebuild and launch `my_robot_bringup` |
 | Cartographer has no IMU subscription | `ros2 node info /cartographer_node` | Confirm the IMU remap and `use_imu_data = true` |
 | No `/map` output | Cartographer logs and sensor rates | Restore `/scan`, IMU, and required TF inputs |
@@ -204,10 +227,11 @@ Match the identity and physical device to VESC, then use its confirmed stable pa
 
 ```bash
 VESC_PORT='/dev/serial/by-id/<confirmed-vesc-device>'
-ros2 launch vesc_driver vesc_driver_node.launch.py port:="$VESC_PORT"
+ros2 launch my_robot_bringup robot.launch.py vesc_port:="$VESC_PORT"
 ```
 
-Omitting `port` preserves the port in the selected YAML; `config:=...` continues to work.
+Omitting `vesc_port` preserves the port in the driver YAML. For a custom driver configuration,
+launch the driver separately with `config:=...` and use `start_vesc:=false` for robot bringup.
 Do not run `vesc_full_bridge.py` or VESC Tool against the same USB device while the C++
 driver is active. The repository udev helper/rules require installation and a verified
 device identity before use.

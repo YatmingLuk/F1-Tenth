@@ -1,0 +1,357 @@
+diff --git a/README.md b/README.md
+index afa6b49..e019d8d 100644
+--- a/README.md
++++ b/README.md
+@@ -31,6 +31,11 @@ Linux. The current estimator also projects map-frame velocity onto the vehicle b
+ publish signed forward speed. Higher-level autonomous behavior and synchronized VESC
+ calibration/fusion remain the next stage.
+ 
++The November 6 work recovered centerline generation and isolated a map-origin mismatch:
++the old centerline belongs to a different mapping session than the live Cartographer pose.
++The controller was exercised on a debug topic, with motor actuation disabled. The same-session
++map-saving procedure was verified; a closed-track centerline and supervised driving remain pending.
++
+ ### Localization data flow
+ 
+ ```mermaid
+@@ -51,7 +56,7 @@ flowchart LR
+ 
+ | Component | Current responsibility |
+ | --- | --- |
+-| `vesc_driver_node` | Opens the configured VESC USB device and publishes `/sensors/core` and ROS-unit IMU data on `/sensors/imu/raw` |
++| `vesc_driver_node` | Started by `robot.launch.py` by default; opens the configured VESC USB device and publishes `/sensors/core` and ROS-unit IMU data on `/sensors/imu/raw` |
+ | `urg_node_driver` | Runs once through `robot.launch.py` and publishes `/scan` at approximately 10 Hz |
+ | Static TF publishers | Publish `base_link -> imu` and `base_link -> laser` |
+ | Cartographer | Consumes `/scan` and `/sensors/imu/raw` and owns the dynamic `map -> odom -> base_link` transform |
+@@ -63,7 +68,7 @@ flowchart LR
+ | Path | Purpose |
+ | --- | --- |
+ | `src/vesc` | VESC driver, messages, and Ackermann bridge |
+-| `src/my_robot_bringup` | Hokuyo launch and static sensor transforms |
++| `src/my_robot_bringup` | Configurable VESC and Hokuyo launch and static sensor transforms |
+ | `src/my_cartographer_config` | Cartographer launch and 2D SLAM configuration |
+ | `src/vehicle_state_estimator` | Cartographer pose-derived speed, velocity components, movement direction, heading, and signed forward speed |
+ | `src/car_control` | Drive bridge, waypoint logging, and pure pursuit |
+@@ -93,20 +98,14 @@ source install/setup.bash
+ Use separate terminals for the main processes:
+ 
+ ```bash
+-# Terminal 1: VESC and IMU
++# Terminal 1: VESC, LiDAR, and sensor transforms
+ VESC_PORT='/dev/serial/by-id/<verified-vesc-id>'
+-ros2 launch vesc_driver vesc_driver_node.launch.py port:="$VESC_PORT"
+-
+-# Terminal 2: drive-command bridge
+-ros2 run car_control drive_to_vesc_bridge --ros-args -r /drive:=/ackermann_cmd
++ros2 launch my_robot_bringup robot.launch.py vesc_port:="$VESC_PORT"
+ 
+-# Terminal 3: LiDAR and static transforms
+-ros2 launch my_robot_bringup robot.launch.py
+-
+-# Terminal 4: LiDAR-IMU Cartographer
++# Terminal 2: LiDAR-IMU Cartographer
+ ros2 launch my_cartographer_config cartographer.launch.py
+ 
+-# Terminal 5: Cartographer-derived vehicle motion
++# Terminal 3: Cartographer-derived vehicle motion
+ ros2 launch vehicle_state_estimator cartographer_velocity.launch.py
+ ```
+ 
+@@ -115,9 +114,10 @@ The estimator publishes `/cartographer_velocity/speed`, `/vx`, `/vy`,
+ `1.0 s` pose-history window and a `0.005 m/s` deadband. `forward_speed` is the map-frame
+ velocity projected onto the vehicle heading, so forward and reverse motion have opposite signs.
+ 
+-If `port` is omitted or empty, the driver keeps the YAML-configured port (currently
++If `vesc_port` is omitted or empty, the driver keeps the YAML-configured port (currently
+ `/dev/ttyACM1`). Find the stable device name with `ls -l /dev/serial/by-id/` and verify it
+-before launch.
++before launch. If starting the driver separately, pass `start_vesc:=false` to robot bringup;
++do not run two VESC drivers against the same device.
+ 
+ For a wheel-speed odometry comparison beside Cartographer, run:
+ 
+@@ -161,6 +161,11 @@ The powered test establishes functional, real-time consistency, not absolute acc
+ independent ground truth was recorded. Synchronized comparison, forward-sign alignment, and
+ calibration of the provisional VESC gain `4614.0` remain next-stage work.
+ 
++In the November 6 investigation, IMU and LiDAR returned at approximately 49.99 Hz and 9.97 Hz.
++The old centerline contained 500 waypoints but its coordinates did not match the active map.
++Use the [same-session mapping and debug procedure](docs/OPERATIONS.md#5-save-a-same-session-map)
++before attempting closed-track control.
++
+ ## Research record
+ 
+ Research Journal files follow one naming rule: `YYYY-MM-DD-research-journal.{md,pdf}`.
+@@ -173,6 +178,7 @@ their original record dates when they were prepared later in the same weekly cyc
+ | **2026-10-08** | [PDF](docs/research/2026-10-08-research-journal.pdf) · [Technical note (Oct 10)](docs/research/2026-10-10-research-journal.md) | [Patch (Oct 10)](docs/research/2026-10-10-code-diff.patch) | VESC telemetry, low-speed odometry visibility, and the calibration plan |
+ | **2026-10-15** | [PDF](docs/research/2026-10-15-research-journal.pdf) · [Technical note](docs/research/2026-10-15-research-journal.md) | [Patch](docs/research/2026-10-15-code-diff.patch) | Cartographer motion estimator and low-speed filter tuning |
+ | **2026-10-23** | [PDF](docs/research/2026-10-23-research-journal.pdf) · [Technical note](docs/research/2026-10-23-research-journal.md) | [Patch](docs/research/2026-10-23-code-diff.patch) | Powered validation, signed forward speed, and the VESC calibration plan |
++| **2026-11-06** | [PDF](docs/research/2026-11-06-research-journal.pdf) · [Technical note](docs/research/2026-11-06-research-journal.md) | [Patch](docs/research/2026-11-06-code-diff.patch) | Centerline recovery, localization, and map-coordinate alignment |
+ 
+ See the [research archive index](docs/research/README.md) for the naming convention and the
+ complete record list.
+diff --git a/docs/OPERATIONS.md b/docs/OPERATIONS.md
+index 63c2e2c..6f02ff3 100644
+--- a/docs/OPERATIONS.md
++++ b/docs/OPERATIONS.md
+@@ -39,29 +39,18 @@ Run the `source` command in every new terminal.
+ 
+ ## 3. Launch the vehicle stack
+ 
+-### Terminal 1: VESC driver and IMU
++### Terminal 1: VESC driver, LiDAR, and sensor TF
+ 
+ ```bash
+ cd ~/newf1_ws
+ source install/setup.bash
+-ros2 launch vesc_driver vesc_driver_node.launch.py
+-```
+-
+-### Terminal 2: Ackermann-to-VESC bridge
+-
+-```bash
+-cd ~/newf1_ws
+-source install/setup.bash
+-ros2 run car_control drive_to_vesc_bridge --ros-args -r /drive:=/ackermann_cmd
++VESC_PORT='/dev/serial/by-id/<confirmed-vesc-device>'
++ros2 launch my_robot_bringup robot.launch.py vesc_port:="$VESC_PORT"
+ ```
+ 
+-### Terminal 3: LiDAR and sensor TF
+-
+-```bash
+-cd ~/newf1_ws
+-source install/setup.bash
+-ros2 launch my_robot_bringup robot.launch.py
+-```
++For a separately launched VESC driver, set `start_vesc:=false` on robot bringup. Do not
++start a second driver on the same USB device. Keep the drive bridge stopped for the debug
++procedure below; the reported Pure Pursuit test did not actuate the vehicle.
+ 
+ `Streaming data` in the driver output indicates that the LiDAR is running. Do not start a
+ second `urg_node` manually; only one driver process should access the Hokuyo sensor.
+@@ -143,42 +132,76 @@ Set:
+ - LaserScan topic: `/scan`
+ - TF display: enabled
+ 
+-## 5. Save the map
++## 5. Save a same-session map
+ 
+-After driving several laps and obtaining a stable map:
++After mapping a closed track and obtaining a stable map, finish the active trajectory and
++save the state. The reported trajectory ID was `0`; check the active ID on the running system.
++Finishing a trajectory stops it from accepting new data.
+ 
+ ```bash
+-ros2 run nav2_map_server map_saver_cli -f ~/my_map --ros-args -p save_map_timeout:=20.0
++ros2 service call /finish_trajectory cartographer_ros_msgs/srv/FinishTrajectory "{trajectory_id: 0}"
++ros2 service call /write_state cartographer_ros_msgs/srv/WriteState "{filename: '$HOME/track_20261105.pbstream', include_unfinished_submaps: true}"
++ros2 run cartographer_ros cartographer_pbstream_to_ros_map \
++  -pbstream_filename="$HOME/track_20261105.pbstream" \
++  -map_filestem="$HOME/track_20261105" -resolution=0.05
+ ```
+ 
++The `.pbstream`, PGM/YAML and centerline must all come from the same mapping session.
++For localization, load that matching saved state using a suitable Cartographer localization
++configuration. The current `my_cartographer_config` launch does not yet provide a saved-state
++localization option; loading and validating one is a next-stage task. Simply reusing the frame
++name `map` does not align different session origins.
++The laboratory save and conversion succeeded; closed-track mapping and localization remain pending.
++
+ ## 6. Generate and inspect the centerline
+ 
+ ```bash
+-ros2 run map_to_centerline generate_centerline
++PYTHONNOUSERSITE=1 ros2 run map_to_centerline generate_centerline --ros-args \
++  -p yaml_path:="$HOME/track_20261105.yaml" \
++  -p png_path:="$HOME/track_20261105.pgm" \
++  -p output_csv:="$HOME/track_20261105_waypoints.csv"
+ ```
+ 
+ Check that the waypoint file contains data:
+ 
+ ```bash
+-head ~/newf1_ws/src/car_control/car_control/waypoints/waypoints.csv
+-tail ~/newf1_ws/src/car_control/car_control/waypoints/waypoints.csv
++head "$HOME/track_20261105_waypoints.csv"
++tail "$HOME/track_20261105_waypoints.csv"
++wc -l "$HOME/track_20261105_waypoints.csv"
+ ```
+ 
+-## 7. Run pure pursuit
++The `PYTHONNOUSERSITE=1` workaround uses the compatible system NumPy/OpenCV pair for this
++command only. The tested old-map result had 500 numeric waypoints plus one header line; it is
++not suitable for a different session. A laboratory map without a closed loop did not yield a
++centerline, consistent with this generator's geometry requirements.
++
++## 7. Debug pure pursuit
+ 
+-Stop the teleoperation process before starting autonomous path following:
++Keep motor actuation disabled and stop teleoperation. Use a centerline generated from the
++same saved state used for localization. Redirect the controller output to a debug-only topic:
+ 
+ ```bash
+ cd ~/newf1_ws
+ source install/setup.bash
+-ros2 run car_control pure_pursuit_tf
++ros2 run car_control pure_pursuit_tf --ros-args \
++  -p waypoint_csv:="$HOME/track_20261105_waypoints.csv" \
++  -r /ackermann_cmd:=/debug_ackermann_cmd
+ ```
+ 
++Inspect `/debug_ackermann_cmd`, the vehicle pose, waypoint markers, target location, and
++steering around the full loop. In the reported mismatch the vehicle was near `(0.09, -0.01)` m,
++but the target was `(3.13, 8.71)` m and steering reached `0.450` rad. Those results demonstrate
++the mismatch, not successful path following. Confirm near targets and non-saturated steering
++before a supervised low-speed test; that closed-track test remains pending.
++
+ ## Troubleshooting quick reference
+ 
+ | Symptom | Check | Likely action |
+ | --- | --- | --- |
+ | `/scan` is far below 10 Hz | Publisher count and `urg_node_driver` processes | Stop the duplicate LiDAR driver |
++| `/sensors/imu/raw` has no publisher | `ros2 topic info /sensors/imu/raw --verbose` and VESC launch | Start the VESC driver once and confirm the USB path |
++| `import cv2` fails with NumPy ABI errors | Check system and user-site NumPy/OpenCV versions | Use `PYTHONNOUSERSITE=1` for centerline generation; avoid global package changes |
++| Pure Pursuit target is far away or steering saturates | Compare waypoint bounds to active map and pose | Regenerate from the same PBStream; keep output on the debug topic |
+ | `base_link` or `imu` frame is missing | `tf2_echo base_link imu` | Rebuild and launch `my_robot_bringup` |
+ | Cartographer has no IMU subscription | `ros2 node info /cartographer_node` | Confirm the IMU remap and `use_imu_data = true` |
+ | No `/map` output | Cartographer logs and sensor rates | Restore `/scan`, IMU, and required TF inputs |
+@@ -204,10 +227,11 @@ Match the identity and physical device to VESC, then use its confirmed stable pa
+ 
+ ```bash
+ VESC_PORT='/dev/serial/by-id/<confirmed-vesc-device>'
+-ros2 launch vesc_driver vesc_driver_node.launch.py port:="$VESC_PORT"
++ros2 launch my_robot_bringup robot.launch.py vesc_port:="$VESC_PORT"
+ ```
+ 
+-Omitting `port` preserves the port in the selected YAML; `config:=...` continues to work.
++Omitting `vesc_port` preserves the port in the driver YAML. For a custom driver configuration,
++launch the driver separately with `config:=...` and use `start_vesc:=false` for robot bringup.
+ Do not run `vesc_full_bridge.py` or VESC Tool against the same USB device while the C++
+ driver is active. The repository udev helper/rules require installation and a verified
+ device identity before use.
+diff --git a/docs/research/2026-11-06-research-journal.md b/docs/research/2026-11-06-research-journal.md
+new file mode 100644
+index 0000000..0af09bb
+--- /dev/null
++++ b/docs/research/2026-11-06-research-journal.md
+@@ -0,0 +1,52 @@
++# F1TENTH Weekly Research Journal - November 6, 2026
++
++**Author:** Yiming Lu
++
++**Platform:** F1TENTH, ROS 2 Humble, Linux
++
++The [original report](2026-11-06-research-journal.pdf) records vehicle-side testing of
++centerline generation, localization recovery, Pure Pursuit debugging, and the map-save
++procedure. Motor actuation was disabled during the reported controller check. This repository
++update adapts the reported VESC launch recovery to the existing configurable launch file; the
++full vehicle-side source snapshot was not supplied, so this adaptation is not a verbatim copy.
++
++## Findings and status
++
++| Investigation | Reported evidence | Interpretation |
++| --- | --- | --- |
++| Centerline Python environment | User-site NumPy 2.2.6 failed to import system OpenCV; `PYTHONNOUSERSITE=1` selected NumPy 1.21.5 and OpenCV 4.5.4 | Scoped workaround; no global package downgrade |
++| Old-map centerline | 500 numeric waypoints, 501 CSV lines; Pure Pursuit loaded all 500 | Generator and CSV path worked, but map compatibility was not established |
++| Sensor recovery | VESC node enabled in the vehicle launch; IMU about 49.99 Hz, LiDAR about 9.97 Hz, `map -> base_link` restored | Sensor-to-localization pipeline recovered |
++| Control debug | Vehicle `(0.09, -0.01)` m, target `(3.13, 8.71)` m, steering `0.450` rad, command speed `0.70` m/s | Distant target and steering saturation; output was remapped to `/debug_ackermann_cmd`, not actuated |
++| Map compatibility | Live map approximately x `[-1.75, 3.85]`, y `[-4.55, 4.75]` m; old centerline started near `(2.95, 9.01)` m | Old centerline and live pose had different map origins |
++| State persistence | Finished trajectory 0, wrote `track_20261105.pbstream`, converted that state to PGM/YAML at 0.05 m | Same-session save and conversion were demonstrated on a laboratory map |
++
++The laboratory map was not a closed track, so its centerline extraction failed as expected for
++the current algorithm. A same-session closed-track map and centerline, matching saved-state
++localization, debug checks over a full loop, and supervised real-car Pure Pursuit remain pending.
++
++## Repository changes
++
++- `src/my_robot_bringup/launch/robot.launch.py` includes the existing configurable VESC driver
++  by default, forwards `vesc_port`, and supports `start_vesc:=false` when the driver runs
++  separately. This reconciles the report's restored VESC publisher with this repository's prior
++  separate-driver architecture. The reported vehicle test predates this repository adaptation;
++  rerun the launch and sensor checks on the vehicle.
++- `src/my_robot_bringup/package.xml` declares the runtime launch and driver dependencies.
++- `docs/OPERATIONS.md` records the scoped OpenCV workaround, same-state map conversion,
++  explicit centerline paths, and debug-only output remap. The existing Cartographer launch
++  has no saved-state localization option; a suitable launch/configuration remains future work.
++- `README.md` and `docs/research/README.md` update the architecture, status, and research index.
++  The original PDF and [repository code diff](2026-11-06-code-diff.patch) are archived here.
++
++No new waypoints, PBStream, PGM, or YAML map from the closed track were supplied with the
++report. The existing `map_to_centerline` and Pure Pursuit source is retained rather than
++claiming that a new algorithm, matching map, or closed-loop test already exists.
++
++## Next experiment
++
++1. Confirm `/scan`, `/sensors/imu/raw`, and `map -> base_link`.
++2. Map a closed track and derive PBStream, PGM/YAML, and waypoints from one session.
++3. Load the matching state for localization and inspect pose/waypoint alignment in RViz.
++4. Keep output on `/debug_ackermann_cmd`; verify near targets and unsaturated steering around
++   the full loop before supervised low-speed actuation.
+diff --git a/docs/research/README.md b/docs/research/README.md
+index 3c3eede..821301e 100644
+--- a/docs/research/README.md
++++ b/docs/research/README.md
+@@ -22,6 +22,7 @@ carry a slightly later date than the PDF for the same weekly cycle.
+ | **2026-10-08** | [PDF](2026-10-08-research-journal.pdf) · [Technical note (Oct 10)](2026-10-10-research-journal.md) | [Patch (Oct 10)](2026-10-10-code-diff.patch) | VESC telemetry, low-speed odometry visibility, and the calibration plan |
+ | **2026-10-15** | [PDF](2026-10-15-research-journal.pdf) · [Technical note](2026-10-15-research-journal.md) | [Patch](2026-10-15-code-diff.patch) | Cartographer motion estimator and low-speed filter tuning |
+ | **2026-10-23** | [PDF](2026-10-23-research-journal.pdf) · [Technical note](2026-10-23-research-journal.md) | [Patch](2026-10-23-code-diff.patch) | Powered validation, signed forward speed, and the VESC calibration plan |
++| **2026-11-06** | [PDF](2026-11-06-research-journal.pdf) · [Technical note](2026-11-06-research-journal.md) | [Patch](2026-11-06-code-diff.patch) | Centerline recovery, localization, and map-coordinate alignment |
+ 
+ The October 4 patch predates the weekly naming convention and is retained as the integration
+ baseline associated with the October 1 journal.
+diff --git a/src/my_robot_bringup/launch/robot.launch.py b/src/my_robot_bringup/launch/robot.launch.py
+index c204e7d..bb4bbf1 100644
+--- a/src/my_robot_bringup/launch/robot.launch.py
++++ b/src/my_robot_bringup/launch/robot.launch.py
+@@ -1,8 +1,20 @@
+ from launch import LaunchDescription
++from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
++from launch.conditions import IfCondition
++from launch.launch_description_sources import PythonLaunchDescriptionSource
++from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+ from launch_ros.actions import Node
++from launch_ros.substitutions import FindPackageShare
+ 
+ def generate_launch_description():
+-    # VESC is started separately through its configurable driver launch file.
++    # Start the existing configurable VESC driver once as part of sensor bringup.
++    vesc = IncludeLaunchDescription(
++        PythonLaunchDescriptionSource(PathJoinSubstitution([
++            FindPackageShare('vesc_driver'), 'launch', 'vesc_driver_node.launch.py'
++        ])),
++        launch_arguments={'port': LaunchConfiguration('vesc_port')}.items(),
++        condition=IfCondition(LaunchConfiguration('start_vesc')),
++    )
+     # Hokuyo LiDAR driver.
+     urg_node = Node(
+         package='urg_node',
+@@ -34,6 +46,11 @@ def generate_launch_description():
+     )
+ 
+     return LaunchDescription([
++        DeclareLaunchArgument('start_vesc', default_value='true',
++                              description='Start VESC with sensor bringup.'),
++        DeclareLaunchArgument('vesc_port', default_value='',
++                              description='Verified VESC USB path; empty uses driver YAML.'),
++        vesc,
+         urg_node,
+         static_tf_base_to_laser,
+         static_tf_base_to_imu,
+diff --git a/src/my_robot_bringup/package.xml b/src/my_robot_bringup/package.xml
+index bc91557..2689324 100644
+--- a/src/my_robot_bringup/package.xml
++++ b/src/my_robot_bringup/package.xml
+@@ -7,6 +7,12 @@
+   <maintainer email="chanky@todo.todo">chanky</maintainer>
+   <license>TODO: License declaration</license>
+ 
++  <exec_depend>launch</exec_depend>
++  <exec_depend>launch_ros</exec_depend>
++  <exec_depend>vesc_driver</exec_depend>
++  <exec_depend>urg_node</exec_depend>
++  <exec_depend>tf2_ros</exec_depend>
++
+   <test_depend>ament_copyright</test_depend>
+   <test_depend>ament_flake8</test_depend>
+   <test_depend>ament_pep257</test_depend>
