@@ -31,6 +31,11 @@ Linux. The current estimator also projects map-frame velocity onto the vehicle b
 publish signed forward speed. Higher-level autonomous behavior and synchronized VESC
 calibration/fusion remain the next stage.
 
+The November 6 work recovered centerline generation and isolated a map-origin mismatch:
+the old centerline belongs to a different mapping session than the live Cartographer pose.
+The controller was exercised on a debug topic, with motor actuation disabled. The same-session
+map-saving procedure was verified; a closed-track centerline and supervised driving remain pending.
+
 ### Localization data flow
 
 ```mermaid
@@ -51,7 +56,7 @@ flowchart LR
 
 | Component | Current responsibility |
 | --- | --- |
-| `vesc_driver_node` | Opens the configured VESC USB device and publishes `/sensors/core` and ROS-unit IMU data on `/sensors/imu/raw` |
+| `vesc_driver_node` | Started by `robot.launch.py` by default; opens the configured VESC USB device and publishes `/sensors/core` and ROS-unit IMU data on `/sensors/imu/raw` |
 | `urg_node_driver` | Runs once through `robot.launch.py` and publishes `/scan` at approximately 10 Hz |
 | Static TF publishers | Publish `base_link -> imu` and `base_link -> laser` |
 | Cartographer | Consumes `/scan` and `/sensors/imu/raw` and owns the dynamic `map -> odom -> base_link` transform |
@@ -63,7 +68,7 @@ flowchart LR
 | Path | Purpose |
 | --- | --- |
 | `src/vesc` | VESC driver, messages, and Ackermann bridge |
-| `src/my_robot_bringup` | Hokuyo launch and static sensor transforms |
+| `src/my_robot_bringup` | Configurable VESC and Hokuyo launch and static sensor transforms |
 | `src/my_cartographer_config` | Cartographer launch and 2D SLAM configuration |
 | `src/vehicle_state_estimator` | Cartographer pose-derived speed, velocity components, movement direction, heading, and signed forward speed |
 | `src/car_control` | Drive bridge, waypoint logging, and pure pursuit |
@@ -93,20 +98,14 @@ source install/setup.bash
 Use separate terminals for the main processes:
 
 ```bash
-# Terminal 1: VESC and IMU
+# Terminal 1: VESC, LiDAR, and sensor transforms
 VESC_PORT='/dev/serial/by-id/<verified-vesc-id>'
-ros2 launch vesc_driver vesc_driver_node.launch.py port:="$VESC_PORT"
+ros2 launch my_robot_bringup robot.launch.py vesc_port:="$VESC_PORT"
 
-# Terminal 2: drive-command bridge
-ros2 run car_control drive_to_vesc_bridge --ros-args -r /drive:=/ackermann_cmd
-
-# Terminal 3: LiDAR and static transforms
-ros2 launch my_robot_bringup robot.launch.py
-
-# Terminal 4: LiDAR-IMU Cartographer
+# Terminal 2: LiDAR-IMU Cartographer
 ros2 launch my_cartographer_config cartographer.launch.py
 
-# Terminal 5: Cartographer-derived vehicle motion
+# Terminal 3: Cartographer-derived vehicle motion
 ros2 launch vehicle_state_estimator cartographer_velocity.launch.py
 ```
 
@@ -115,9 +114,10 @@ The estimator publishes `/cartographer_velocity/speed`, `/vx`, `/vy`,
 `1.0 s` pose-history window and a `0.005 m/s` deadband. `forward_speed` is the map-frame
 velocity projected onto the vehicle heading, so forward and reverse motion have opposite signs.
 
-If `port` is omitted or empty, the driver keeps the YAML-configured port (currently
+If `vesc_port` is omitted or empty, the driver keeps the YAML-configured port (currently
 `/dev/ttyACM1`). Find the stable device name with `ls -l /dev/serial/by-id/` and verify it
-before launch.
+before launch. If starting the driver separately, pass `start_vesc:=false` to robot bringup;
+do not run two VESC drivers against the same device.
 
 For a wheel-speed odometry comparison beside Cartographer, run:
 
@@ -161,6 +161,11 @@ The powered test establishes functional, real-time consistency, not absolute acc
 independent ground truth was recorded. Synchronized comparison, forward-sign alignment, and
 calibration of the provisional VESC gain `4614.0` remain next-stage work.
 
+In the November 6 investigation, IMU and LiDAR returned at approximately 49.99 Hz and 9.97 Hz.
+The old centerline contained 500 waypoints but its coordinates did not match the active map.
+Use the [same-session mapping and debug procedure](docs/OPERATIONS.md#5-save-a-same-session-map)
+before attempting closed-track control.
+
 ## Research record
 
 Research Journal files follow one naming rule: `YYYY-MM-DD-research-journal.{md,pdf}`.
@@ -173,6 +178,7 @@ their original record dates when they were prepared later in the same weekly cyc
 | **2026-10-08** | [PDF](docs/research/2026-10-08-research-journal.pdf) · [Technical note (Oct 10)](docs/research/2026-10-10-research-journal.md) | [Patch (Oct 10)](docs/research/2026-10-10-code-diff.patch) | VESC telemetry, low-speed odometry visibility, and the calibration plan |
 | **2026-10-15** | [PDF](docs/research/2026-10-15-research-journal.pdf) · [Technical note](docs/research/2026-10-15-research-journal.md) | [Patch](docs/research/2026-10-15-code-diff.patch) | Cartographer motion estimator and low-speed filter tuning |
 | **2026-10-23** | [PDF](docs/research/2026-10-23-research-journal.pdf) · [Technical note](docs/research/2026-10-23-research-journal.md) | [Patch](docs/research/2026-10-23-code-diff.patch) | Powered validation, signed forward speed, and the VESC calibration plan |
+| **2026-11-06** | [PDF](docs/research/2026-11-06-research-journal.pdf) · [Technical note](docs/research/2026-11-06-research-journal.md) | [Patch](docs/research/2026-11-06-code-diff.patch) | Centerline recovery, localization, and map-coordinate alignment |
 
 See the [research archive index](docs/research/README.md) for the naming convention and the
 complete record list.
