@@ -146,12 +146,12 @@ ros2 run cartographer_ros cartographer_pbstream_to_ros_map \
   -map_filestem="$HOME/track_20261105" -resolution=0.05
 ```
 
-The `.pbstream`, PGM/YAML and centerline must all come from the same mapping session.
-For localization, load that matching saved state using a suitable Cartographer localization
-configuration. The current `my_cartographer_config` launch does not yet provide a saved-state
-localization option; loading and validating one is a next-stage task. Simply reusing the frame
-name `map` does not align different session origins.
-The laboratory save and conversion succeeded; closed-track mapping and localization remain pending.
+Keep the `.pbstream`, PGM/YAML and generated centerline together under one map version. If the
+mapping state is replaced, export a new PGM/YAML and regenerate the centerline from that map.
+For localization, load the matching `.pbstream` using the vehicle's Cartographer localization
+configuration. The `my_cartographer_config` launch in this repository starts mapping. The
+[November 13 report](research/2026-11-13-research-journal.pdf) confirms saved-state localization
+on the vehicle and does not supply its launch configuration.
 
 ## 6. Generate and inspect the centerline
 
@@ -174,6 +174,18 @@ The `PYTHONNOUSERSITE=1` workaround uses the compatible system NumPy/OpenCV pair
 command only. The tested old-map result had 500 numeric waypoints plus one header line; it is
 not suitable for a different session. A laboratory map without a closed loop did not yield a
 centerline, consistent with this generator's geometry requirements.
+
+Before starting the controller, verify the map provenance and check the overlay:
+
+1. Confirm that the centerline comes from the PGM/YAML exported from the `.pbstream` in use
+   for localization.
+2. Confirm matching map origins and orientations. A shared `map` frame name alone is insufficient.
+3. With RViz fixed to `map`, inspect the saved map, centerline and `map -> base_link` pose together.
+   Check that the pose is in the mapped track region and the centerline lies between the expected
+   track boundaries.
+
+The November 13 single-vehicle check confirmed these conditions. See the
+[technical note](research/2026-11-13-research-journal.md) for the scope of verification.
 
 ## 7. Debug pure pursuit
 

@@ -1,11 +1,12 @@
 # F1Tenth Autonomous Racing Platform
 
 This repository contains our ROS 2 F1Tenth vehicle stack for localization, mapping,
-trajectory generation, vehicle control, and autonomous-racing experiments. The current
-milestone integrates the VESC IMU and Hokuyo LiDAR into Cartographer and publishes a
-real-time vehicle pose and occupancy grid for RViz 2.
+trajectory generation, vehicle control, and autonomous-racing experiments. Cartographer uses
+the VESC IMU and Hokuyo LiDAR to publish vehicle pose and an occupancy grid for RViz 2.
+The latest milestone verified that the localized pose and generated centerline use the same
+saved map coordinates on the physical vehicle.
 
-## Current milestone: LiDAR-IMU localization
+## LiDAR-IMU localization
 
 - VESC IMU published as `sensor_msgs/msg/Imu` on `/sensors/imu/raw` at approximately 50 Hz.
 - Hokuyo LiDAR published as `sensor_msgs/msg/LaserScan` on `/scan` at approximately 10 Hz.
@@ -31,10 +32,13 @@ Linux. The current estimator also projects map-frame velocity onto the vehicle b
 publish signed forward speed. Higher-level autonomous behavior and synchronized VESC
 calibration/fusion remain the next stage.
 
-The November 6 work recovered centerline generation and isolated a map-origin mismatch:
-the old centerline belongs to a different mapping session than the live Cartographer pose.
-The controller was exercised on a debug topic, with motor actuation disabled. The same-session
-map-saving procedure was verified; a closed-track centerline and supervised driving remain pending.
+On November 6, a debug test traced the distant Pure Pursuit target to a centerline from a
+different mapping session. On November 13, the team confirmed the centerline and localized
+pose used the same map origin and orientation and overlaid the same track region. The
+[map workflow](docs/OPERATIONS.md#5-save-a-same-session-map) ties saved map files and
+centerline generation to the state used for localization. Closed-loop driving validation
+remains pending. The [November 13 technical note](docs/research/2026-11-13-research-journal.md)
+records the preliminary design for sharing localization and speed between two vehicles.
 
 ### Localization data flow
 
@@ -162,9 +166,9 @@ independent ground truth was recorded. Synchronized comparison, forward-sign ali
 calibration of the provisional VESC gain `4614.0` remain next-stage work.
 
 In the November 6 investigation, IMU and LiDAR returned at approximately 49.99 Hz and 9.97 Hz.
-The old centerline contained 500 waypoints but its coordinates did not match the active map.
-Use the [same-session mapping and debug procedure](docs/OPERATIONS.md#5-save-a-same-session-map)
-before attempting closed-track control.
+The November 13 single-vehicle check confirmed normal sensor and localization operation and
+corrected centerline alignment. The report records a qualitative overlay check and leaves
+quantitative localization accuracy and controller performance for future tests.
 
 ## Research record
 
@@ -179,6 +183,7 @@ their original record dates when they were prepared later in the same weekly cyc
 | **2026-10-15** | [PDF](docs/research/2026-10-15-research-journal.pdf) · [Technical note](docs/research/2026-10-15-research-journal.md) | [Patch](docs/research/2026-10-15-code-diff.patch) | Cartographer motion estimator and low-speed filter tuning |
 | **2026-10-23** | [PDF](docs/research/2026-10-23-research-journal.pdf) · [Technical note](docs/research/2026-10-23-research-journal.md) | [Patch](docs/research/2026-10-23-code-diff.patch) | Powered validation, signed forward speed, and the VESC calibration plan |
 | **2026-11-06** | [PDF](docs/research/2026-11-06-research-journal.pdf) · [Technical note](docs/research/2026-11-06-research-journal.md) | [Patch](docs/research/2026-11-06-code-diff.patch) | Centerline recovery, localization, and map-coordinate alignment |
+| **2026-11-13** | [PDF](docs/research/2026-11-13-research-journal.pdf) · [Technical note](docs/research/2026-11-13-research-journal.md) | — | Centerline and localization synchronization; two-vehicle state-sharing plan |
 
 See the [research archive index](docs/research/README.md) for the naming convention and the
 complete record list.

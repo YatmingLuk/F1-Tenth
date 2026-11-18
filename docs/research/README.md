@@ -8,7 +8,7 @@ This directory stores the weekly research record in a predictable, date-first fo
 | :--- | :--- |
 | Readable technical journal | `YYYY-MM-DD-research-journal.md` |
 | Original submitted journal | `YYYY-MM-DD-research-journal.pdf` |
-| Exact repository change set | `YYYY-MM-DD-code-diff.patch` |
+| Code diff, when source changes are recorded | `YYYY-MM-DD-code-diff.patch` |
 
 PDF names use the date printed in the submitted journal. Markdown technical notes and patch
 files keep the date on which their repository record was prepared. A technical note may therefore
@@ -23,6 +23,7 @@ carry a slightly later date than the PDF for the same weekly cycle.
 | **2026-10-15** | [PDF](2026-10-15-research-journal.pdf) · [Technical note](2026-10-15-research-journal.md) | [Patch](2026-10-15-code-diff.patch) | Cartographer motion estimator and low-speed filter tuning |
 | **2026-10-23** | [PDF](2026-10-23-research-journal.pdf) · [Technical note](2026-10-23-research-journal.md) | [Patch](2026-10-23-code-diff.patch) | Powered validation, signed forward speed, and the VESC calibration plan |
 | **2026-11-06** | [PDF](2026-11-06-research-journal.pdf) · [Technical note](2026-11-06-research-journal.md) | [Patch](2026-11-06-code-diff.patch) | Centerline recovery, localization, and map-coordinate alignment |
+| **2026-11-13** | [PDF](2026-11-13-research-journal.pdf) · [Technical note](2026-11-13-research-journal.md) | — | Centerline and localization synchronization; two-vehicle state-sharing plan |
 
 The October 4 patch predates the weekly naming convention and is retained as the integration
 baseline associated with the October 1 journal.
