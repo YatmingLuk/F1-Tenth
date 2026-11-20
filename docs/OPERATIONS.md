@@ -134,18 +134,6 @@ Set:
 
 ## 5. Save a same-session map
 
-After mapping a closed track and obtaining a stable map, finish the active trajectory and
-save the state. The reported trajectory ID was `0`; check the active ID on the running system.
-Finishing a trajectory stops it from accepting new data.
-
-```bash
-ros2 service call /finish_trajectory cartographer_ros_msgs/srv/FinishTrajectory "{trajectory_id: 0}"
-ros2 service call /write_state cartographer_ros_msgs/srv/WriteState "{filename: '$HOME/track_20261105.pbstream', include_unfinished_submaps: true}"
-ros2 run cartographer_ros cartographer_pbstream_to_ros_map \
-  -pbstream_filename="$HOME/track_20261105.pbstream" \
-  -map_filestem="$HOME/track_20261105" -resolution=0.05
-```
-
 Keep the `.pbstream`, PGM/YAML and generated centerline together under one map version. If the
 mapping state is replaced, export a new PGM/YAML and regenerate the centerline from that map.
 For localization, load the matching `.pbstream` using the vehicle's Cartographer localization
@@ -153,21 +141,68 @@ configuration. The `my_cartographer_config` launch in this repository starts map
 [November 13 report](research/2026-11-13-research-journal.pdf) confirms saved-state localization
 on the vehicle and does not supply its launch configuration.
 
+### Prepare the field master map
+
+Start a fresh Cartographer mapping session at the test site. Manually drive slowly through
+the required area and revisit observed sections to support loop closure. Leave Pure Pursuit
+stopped during mapping. Use RViz to inspect the map and scan overlay when available.
+
+Without RViz, use separate terminals to monitor the live pose and submaps:
+
+```bash
+ros2 run tf2_ros tf2_echo map base_link
+ros2 topic echo /submap_list
+```
+
+Choose a new run directory on the vehicle and keep the same `MAP_DIR` for the save and
+conversion commands. Save checkpoints to distinct paths while the trajectory is active.
+Include unfinished submaps for checkpoints:
+
+```bash
+MAP_DIR="$HOME/maps/field-YYYYMMDD-run1"  # Set a new directory for this run.
+mkdir -p "$MAP_DIR"
+ros2 service call /write_state cartographer_ros_msgs/srv/WriteState \
+  "{filename: '$MAP_DIR/lab_checkpoint_01.pbstream', include_unfinished_submaps: true}"
+```
+
+After covering the route, query the active trajectory. Replace `0` below if the active ID
+differs. Finishing a trajectory stops it from accepting new data. Confirm each service reports
+success before running the next command:
+
+```bash
+ros2 service call /get_trajectory_states cartographer_ros_msgs/srv/GetTrajectoryStates '{}'
+ros2 service call /finish_trajectory cartographer_ros_msgs/srv/FinishTrajectory '{trajectory_id: 0}'
+ros2 service call /write_state cartographer_ros_msgs/srv/WriteState \
+  "{filename: '$MAP_DIR/lab_master.pbstream', include_unfinished_submaps: false}"
+ros2 run cartographer_ros cartographer_pbstream_to_ros_map \
+  -pbstream_filename="$MAP_DIR/lab_master.pbstream" \
+  -map_filestem="$MAP_DIR/lab_master" -resolution=0.05
+```
+
+Accept the master map after verifying sensor rates, continuous pose, submap updates without
+unexpected trajectory resets, successful conversion, complete route coverage and clean map
+geometry. Restart in localization-only mode against the saved PBStream and verify consistent
+pose recovery before distributing the same map package to the second vehicle. For centerline
+generation, use the matching `lab_master.pgm` and `lab_master.yaml` in the next section.
+See the [November 20 technical note](research/2026-11-20-research-journal.md) for the results
+already observed and the remaining field checks.
+
 ## 6. Generate and inspect the centerline
 
 ```bash
+MAP_DIR="$HOME/maps/field-YYYYMMDD-run1"  # Use the directory for the selected map.
 PYTHONNOUSERSITE=1 ros2 run map_to_centerline generate_centerline --ros-args \
-  -p yaml_path:="$HOME/track_20261105.yaml" \
-  -p png_path:="$HOME/track_20261105.pgm" \
-  -p output_csv:="$HOME/track_20261105_waypoints.csv"
+  -p yaml_path:="$MAP_DIR/lab_master.yaml" \
+  -p png_path:="$MAP_DIR/lab_master.pgm" \
+  -p output_csv:="$MAP_DIR/lab_master_waypoints.csv"
 ```
 
 Check that the waypoint file contains data:
 
 ```bash
-head "$HOME/track_20261105_waypoints.csv"
-tail "$HOME/track_20261105_waypoints.csv"
-wc -l "$HOME/track_20261105_waypoints.csv"
+head "$MAP_DIR/lab_master_waypoints.csv"
+tail "$MAP_DIR/lab_master_waypoints.csv"
+wc -l "$MAP_DIR/lab_master_waypoints.csv"
 ```
 
 The `PYTHONNOUSERSITE=1` workaround uses the compatible system NumPy/OpenCV pair for this
@@ -195,8 +230,9 @@ same saved state used for localization. Redirect the controller output to a debu
 ```bash
 cd ~/newf1_ws
 source install/setup.bash
+MAP_DIR="$HOME/maps/field-YYYYMMDD-run1"  # Use the directory for the localized map.
 ros2 run car_control pure_pursuit_tf --ros-args \
-  -p waypoint_csv:="$HOME/track_20261105_waypoints.csv" \
+  -p waypoint_csv:="$MAP_DIR/lab_master_waypoints.csv" \
   -r /ackermann_cmd:=/debug_ackermann_cmd
 ```
 
