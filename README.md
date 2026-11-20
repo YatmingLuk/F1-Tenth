@@ -3,8 +3,8 @@
 This repository contains our ROS 2 F1Tenth vehicle stack for localization, mapping,
 trajectory generation, vehicle control, and autonomous-racing experiments. Cartographer uses
 the VESC IMU and Hokuyo LiDAR to publish vehicle pose and an occupancy grid for RViz 2.
-The latest milestone verified that the localized pose and generated centerline use the same
-saved map coordinates on the physical vehicle.
+The latest milestone verified the physical vehicle's mapping pipeline through live pose and
+occupancy-grid output, and defined how to save one master map for future two-vehicle localization.
 
 ## LiDAR-IMU localization
 
@@ -39,6 +39,12 @@ pose used the same map origin and orientation and overlaid the same track region
 centerline generation to the state used for localization. Closed-loop driving validation
 remains pending. The [November 13 technical note](docs/research/2026-11-13-research-journal.md)
 records the preliminary design for sharing localization and speed between two vehicles.
+
+The two-vehicle design uses one vehicle to create a master map. Both vehicles will localize
+against the same frozen Cartographer state, which defines their common `map` frame. The
+PGM/YAML pair and any centerline are derived from that state. The field master map,
+localization-only restart, second-vehicle deployment and shared `VehicleState` layer are
+still pending. See the [field mapping procedure](docs/OPERATIONS.md#prepare-the-field-master-map).
 
 ### Localization data flow
 
@@ -170,6 +176,11 @@ The November 13 single-vehicle check confirmed normal sensor and localization op
 corrected centerline alignment. The report records a qualitative overlay check and leaves
 quantitative localization accuracy and controller performance for future tests.
 
+On November 20, the vehicle sustained approximately 10 Hz LiDAR and 50 Hz IMU streams,
+updated Cartographer submaps and published live `map -> base_link`. The laboratory occupancy
+grid measured 95 × 181 cells at 0.05 m per cell, with origin near `(-1.40, -4.30)` m. This
+verified the mapping pipeline. The final master map will be recorded in a fresh field session.
+
 ## Research record
 
 Research Journal files follow one naming rule: `YYYY-MM-DD-research-journal.{md,pdf}`.
@@ -184,6 +195,7 @@ their original record dates when they were prepared later in the same weekly cyc
 | **2026-10-23** | [PDF](docs/research/2026-10-23-research-journal.pdf) · [Technical note](docs/research/2026-10-23-research-journal.md) | [Patch](docs/research/2026-10-23-code-diff.patch) | Powered validation, signed forward speed, and the VESC calibration plan |
 | **2026-11-06** | [PDF](docs/research/2026-11-06-research-journal.pdf) · [Technical note](docs/research/2026-11-06-research-journal.md) | [Patch](docs/research/2026-11-06-code-diff.patch) | Centerline recovery, localization, and map-coordinate alignment |
 | **2026-11-13** | [PDF](docs/research/2026-11-13-research-journal.pdf) · [Technical note](docs/research/2026-11-13-research-journal.md) | — | Centerline and localization synchronization; two-vehicle state-sharing plan |
+| **2026-11-20** | [PDF](docs/research/2026-11-20-research-journal.pdf) · [Technical note](docs/research/2026-11-20-research-journal.md) | — | Vehicle mapping checks and preparation for a shared master map |
 
 See the [research archive index](docs/research/README.md) for the naming convention and the
 complete record list.
